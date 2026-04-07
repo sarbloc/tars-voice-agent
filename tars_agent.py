@@ -11,9 +11,12 @@ Uses:
 STT transcript → OpenClaw HTTP streaming → Kokoro TTS (chunk-by-chunk)
 """
 
+import asyncio
 import json
 import os
 import logging
+import random
+import time
 from collections.abc import AsyncIterable
 from dotenv import load_dotenv
 import httpx
@@ -27,6 +30,7 @@ from livekit.agents import (
     cli,
     llm,
 )
+from livekit.agents.types import FlushSentinel
 from livekit.plugins import openai, silero
 
 load_dotenv()
@@ -46,6 +50,17 @@ VOICE_INSTRUCTIONS = """This is a live voice call. You MUST respond with plain t
 No voice notes, no audio, no markdown, no bullet points, no formatting.
 Keep responses short and conversational — 1-3 sentences max.
 Natural spoken language only. Like a real phone call."""
+
+# Filler phrases spoken while waiting for slow LLM responses.
+# Tone: dry, no-nonsense — consistent with TARS personality.
+FILLER_PHRASES = [
+    "Let me check on that.",
+    "Hold on a sec.",
+    "One moment.",
+    "Checking now.",
+    "Working on it.",
+    "Give me a second.",
+]
 
 # Shared httpx client for OpenClaw streaming calls
 _http_client: httpx.AsyncClient | None = None
@@ -133,8 +148,48 @@ class TARSAgent(Agent):
             yield "I didn't catch that. Could you say it again?"
             return
 
+        t0 = time.monotonic()
         logger.info("sending to openclaw: %s", user_message[:100])
-        async for chunk in _stream_openclaw(user_message, self._session_id):
+
+        # Filler phrases while waiting for the first LLM token.
+        # Each fires at a cumulative timeout; FlushSentinel forces immediate TTS.
+        #   1.5s — "um..."
+        #   3.0s — random filler phrase
+        #   6.0s — second random filler phrase
+        FILLER_SCHEDULE = [
+            (1.5, "um... "),
+            (1.5, None),  # None = pick random from FILLER_PHRASES
+            (3.0, None),
+        ]
+
+        stream = _stream_openclaw(user_message, self._session_id).__aiter__()
+        next_task = asyncio.ensure_future(anext(stream))
+        first_chunk = None
+
+        for timeout, phrase in FILLER_SCHEDULE:
+            try:
+                first_chunk = await asyncio.wait_for(asyncio.shield(next_task), timeout=timeout)
+                logger.info("first token at %.2fs", time.monotonic() - t0)
+                break
+            except asyncio.TimeoutError:
+                text = phrase if phrase else random.choice(FILLER_PHRASES) + " "
+                logger.info("%.2fs, speaking filler: %s", time.monotonic() - t0, text.strip())
+                yield text
+                yield FlushSentinel()
+            except StopAsyncIteration:
+                yield "I didn't catch that. Could you say it again?"
+                return
+
+        # If all fillers exhausted, wait indefinitely for the response
+        if first_chunk is None:
+            try:
+                first_chunk = await next_task
+                logger.info("first token at %.2fs", time.monotonic() - t0)
+            except StopAsyncIteration:
+                return
+
+        yield first_chunk
+        async for chunk in stream:
             yield chunk
 
 
@@ -147,15 +202,21 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession(
         vad=silero.VAD.load(),
 
-        # Silence-based turn detection: wait 0.6s of silence before treating
-        # the user's turn as complete. The ONNX-based EnglishModel fails in the
-        # inference subprocess on this setup, so we use fixed-delay instead.
+        # Silence-based turn detection. The ONNX-based EnglishModel returns None
+        # from do_inference intermittently on this setup (Python 3.14 + forkserver),
+        # causing AssertionError in predict_end_of_turn. Using VAD fallback.
         turn_handling={
             "turn_detection": "vad",
-            "endpointing": {"min_delay": 0.6, "max_delay": 1.5},
+            "endpointing": {"min_delay": 0.5, "max_delay": 1.5},
+            "interruption": {
+                "enabled": True,
+                "min_duration": 0.5,
+                "resume_false_interruption": True,
+                "false_interruption_timeout": 2.0,
+            },
         },
 
-        # STT — self-hosted faster-whisper
+        # STT — self-hosted Speaches (faster-whisper)
         stt=openai.STT(
             model="Systran/faster-whisper-large-v3",
             base_url=WHISPER_BASE_URL,

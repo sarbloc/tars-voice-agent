@@ -11,7 +11,8 @@ https://jeeves.taildf3e68.ts.net:8443 {
 	}
 
 	# LiveKit WebSocket — upgrade to ws
-	handle /rtc* {
+	@livekit path /rtc /rtc/*
+	handle @livekit {
 		reverse_proxy localhost:7880
 	}
 
