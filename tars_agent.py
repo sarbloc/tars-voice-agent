@@ -5,17 +5,18 @@ Uses:
 - Silero VAD for voice activity detection
 - LiveKit turn detector for natural conversation flow
 - faster-whisper (self-hosted) for speech-to-text
-- OpenClaw cooper agent for LLM (same brain as Telegram TARS)
+- OpenClaw cooper agent via Chat Completions HTTP API (streaming)
 - Kokoro (self-hosted) for text-to-speech with am_onyx voice
 
-STT transcript → OpenClaw (cooper/TARS) → text response → Kokoro TTS
+STT transcript → OpenClaw HTTP streaming → Kokoro TTS (chunk-by-chunk)
 """
 
-import asyncio
 import json
 import os
 import logging
+from collections.abc import AsyncIterable
 from dotenv import load_dotenv
+import httpx
 
 from livekit.agents import (
     Agent,
@@ -26,8 +27,7 @@ from livekit.agents import (
     cli,
     llm,
 )
-from livekit.plugins import openai, silero, anthropic
-from livekit.plugins.turn_detector.english import EnglishModel
+from livekit.plugins import openai, silero
 
 load_dotenv()
 
@@ -38,40 +38,60 @@ logger.setLevel(logging.INFO)
 WHISPER_BASE_URL = os.getenv("WHISPER_BASE_URL", "http://192.168.50.13:8001/v1")
 KOKORO_BASE_URL = os.getenv("KOKORO_BASE_URL", "http://192.168.50.13:8002/v1")
 TARS_VOICE = os.getenv("TARS_VOICE", "am_onyx")
-OPENCLAW_BIN = os.getenv("OPENCLAW_BIN", os.path.expanduser("~/.npm-global/bin/openclaw"))
+OPENCLAW_URL = os.getenv("OPENCLAW_URL", "http://127.0.0.1:18789/v1")
+OPENCLAW_TOKEN = os.getenv("OPENCLAW_GATEWAY_TOKEN", "")
 
-# Voice-only instructions — personality/memory/tools are handled by OpenClaw
-VOICE_INSTRUCTIONS = """This is a voice conversation. Keep responses concise and natural for speech.
-No bullet points, no markdown, no formatting — pure spoken language.
-Short sentences. Natural pauses. Like a real conversation."""
+# Voice-only instructions — sent as system message to OpenClaw with every request
+VOICE_INSTRUCTIONS = """This is a live voice call. You MUST respond with plain text only.
+No voice notes, no audio, no markdown, no bullet points, no formatting.
+Keep responses short and conversational — 1-3 sentences max.
+Natural spoken language only. Like a real phone call."""
+
+# Shared httpx client for OpenClaw streaming calls
+_http_client: httpx.AsyncClient | None = None
 
 
-async def openclaw_ask(message: str) -> str:
-    """Call OpenClaw cooper agent via CLI and return the text response."""
-    proc = await asyncio.create_subprocess_exec(
-        OPENCLAW_BIN, "agent",
-        "--agent", "cooper",
-        "--message", message,
-        "--session-id", "voice",
-        "--thinking", "off",
-        "--json",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
+def _get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0))
+    return _http_client
 
-    if proc.returncode != 0:
-        logger.error("openclaw agent failed: %s", stderr.decode())
-        return "Sorry, I had trouble thinking about that. Try again."
 
-    try:
-        data = json.loads(stdout.decode())
-        payloads = data.get("result", {}).get("payloads", [])
-        texts = [p["text"] for p in payloads if isinstance(p, dict) and "text" in p]
-        return " ".join(texts) if texts else "I don't have a response for that."
-    except (json.JSONDecodeError, KeyError) as e:
-        logger.error("failed to parse openclaw response: %s", e)
-        return "Sorry, something went wrong on my end."
+async def _stream_openclaw(message: str, session_id: str) -> AsyncIterable[str]:
+    """Stream a response from OpenClaw Chat Completions API, yielding text chunks."""
+    client = _get_http_client()
+    async with client.stream(
+        "POST",
+        f"{OPENCLAW_URL}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {OPENCLAW_TOKEN}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": "openclaw:cooper",
+            "messages": [
+                {"role": "system", "content": VOICE_INSTRUCTIONS},
+                {"role": "user", "content": message},
+            ],
+            "user": session_id,
+            "stream": True,
+        },
+    ) as resp:
+        resp.raise_for_status()
+        async for line in resp.aiter_lines():
+            if not line.startswith("data: "):
+                continue
+            data = line[6:]
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+                content = chunk["choices"][0].get("delta", {}).get("content")
+                if content:
+                    yield content
+            except (json.JSONDecodeError, KeyError, IndexError):
+                continue
 
 
 class TARSAgent(Agent):
@@ -79,11 +99,10 @@ class TARSAgent(Agent):
 
     def __init__(self):
         super().__init__(instructions=VOICE_INSTRUCTIONS)
+        # Stable session — avoids expensive agent re-initialization on each connection
+        self._session_id = "sarbloc-voice"
 
     async def on_enter(self):
-        """Called when TARS becomes the active agent in a session."""
-        # Use say() instead of generate_reply() — sends text directly to TTS
-        # without needing the LLM pipeline
         self.session.say("Hey Sarbloc, what's going on?")
 
     async def llm_node(
@@ -91,11 +110,12 @@ class TARSAgent(Agent):
         chat_ctx: llm.ChatContext,
         tools: list[llm.Tool],
         model_settings: ModelSettings,
-    ) -> str:
-        """Route LLM calls through OpenClaw instead of a direct API."""
-        # Extract the latest user message from chat context
-        # ChatMessage.content is always a list[ChatContent] where
-        # ChatContent = ImageContent | AudioContent | Instructions | str
+    ) -> AsyncIterable[str]:
+        """Stream LLM responses from OpenClaw — only sends the user message.
+
+        OpenClaw manages its own conversation context via the session user ID,
+        so we don't forward LiveKit's chat history.
+        """
         user_message = ""
         for msg in reversed(chat_ctx.items):
             if not hasattr(msg, "role") or msg.role != "user":
@@ -110,12 +130,12 @@ class TARSAgent(Agent):
             break
 
         if not user_message:
-            return "I didn't catch that. Could you say it again?"
+            yield "I didn't catch that. Could you say it again?"
+            return
 
         logger.info("sending to openclaw: %s", user_message[:100])
-        response = await openclaw_ask(user_message)
-        logger.info("openclaw response: %s", response[:100])
-        return response
+        async for chunk in _stream_openclaw(user_message, self._session_id):
+            yield chunk
 
 
 server = AgentServer()
@@ -125,13 +145,17 @@ server = AgentServer()
 async def entrypoint(ctx: JobContext):
     """Entry point — starts the TARS voice pipeline."""
     session = AgentSession(
-        # Voice Activity Detection — detects when user is speaking
         vad=silero.VAD.load(),
 
-        # Turn detection — knows when user has finished their turn
-        turn_detection=EnglishModel(),
+        # Silence-based turn detection: wait 0.6s of silence before treating
+        # the user's turn as complete. The ONNX-based EnglishModel fails in the
+        # inference subprocess on this setup, so we use fixed-delay instead.
+        turn_handling={
+            "turn_detection": "vad",
+            "endpointing": {"min_delay": 0.6, "max_delay": 1.5},
+        },
 
-        # Speech-to-Text — self-hosted faster-whisper via OpenAI-compatible API
+        # STT — self-hosted faster-whisper
         stt=openai.STT(
             model="Systran/faster-whisper-large-v3",
             base_url=WHISPER_BASE_URL,
@@ -139,13 +163,15 @@ async def entrypoint(ctx: JobContext):
             language="en",
         ),
 
-        # LLM — placeholder to satisfy framework check; actual calls go through
-        # TARSAgent.llm_node override which routes to OpenClaw CLI
-        llm=anthropic.LLM(model="claude-haiku-4-5-20251001"),
+        # LLM — placeholder so the framework activates the LLM pipeline;
+        # actual calls are handled by TARSAgent.llm_node override above
+        llm=openai.LLM(
+            model="openclaw:cooper",
+            base_url=OPENCLAW_URL,
+            api_key=OPENCLAW_TOKEN,
+        ),
 
-        # Text-to-Speech — self-hosted Kokoro via OpenAI-compatible API
-        # model="tts-1" forces the AudioChunkedStream path (raw audio download)
-        # instead of SSE streaming which Kokoro doesn't support
+        # TTS — self-hosted Kokoro
         tts=openai.TTS(
             model="tts-1",
             voice=TARS_VOICE,
@@ -154,8 +180,6 @@ async def entrypoint(ctx: JobContext):
             response_format="wav",
         ),
 
-        # Wait 800ms of silence before assuming user is done
-        min_consecutive_speech_delay=0.8,
     )
 
     await session.start(agent=TARSAgent(), room=ctx.room)
