@@ -11,6 +11,11 @@ Uses:
 STT transcript → OpenClaw HTTP streaming → Kokoro TTS (chunk-by-chunk)
 """
 
+# Python 3.14 defaults to forkserver which breaks LiveKit's turn detector
+# ONNX inference subprocess IPC. Force fork before any LiveKit imports.
+import multiprocessing
+multiprocessing.set_start_method("fork", force=True)
+
 import asyncio
 import json
 import os
@@ -32,6 +37,7 @@ from livekit.agents import (
 )
 from livekit.agents.types import FlushSentinel
 from livekit.plugins import openai, silero
+from livekit.plugins.turn_detector.english import EnglishModel
 
 load_dotenv()
 
@@ -201,20 +207,7 @@ async def entrypoint(ctx: JobContext):
     """Entry point — starts the TARS voice pipeline."""
     session = AgentSession(
         vad=silero.VAD.load(),
-
-        # Silence-based turn detection. The ONNX-based EnglishModel returns None
-        # from do_inference intermittently on this setup (Python 3.14 + forkserver),
-        # causing AssertionError in predict_end_of_turn. Using VAD fallback.
-        turn_handling={
-            "turn_detection": "vad",
-            "endpointing": {"min_delay": 0.5, "max_delay": 1.5},
-            "interruption": {
-                "enabled": True,
-                "min_duration": 0.5,
-                "resume_false_interruption": True,
-                "false_interruption_timeout": 2.0,
-            },
-        },
+        turn_detection=EnglishModel(),
 
         # STT — self-hosted Speaches (faster-whisper)
         stt=openai.STT(
