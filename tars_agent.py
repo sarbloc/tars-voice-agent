@@ -53,10 +53,15 @@ TARS_VOICE = os.getenv("TARS_VOICE", "am_onyx")
 OPENCLAW_URL = os.getenv("OPENCLAW_URL", "http://127.0.0.1:18789/v1")
 OPENCLAW_TOKEN = os.getenv("OPENCLAW_GATEWAY_TOKEN", "")
 
-# Voice-only instructions — sent as system message to OpenClaw with every request
-VOICE_INSTRUCTIONS = """This is a live voice call. You MUST respond with plain text only.
-No voice notes, no audio, no markdown, no bullet points, no formatting.
-Keep responses short and conversational — 1-3 sentences max.
+# Voice-only instructions — sent as system message to OpenClaw with every request.
+# Output is fed directly to a TTS engine that relies on punctuation for pacing.
+VOICE_INSTRUCTIONS = """This is a live voice call. Your response will be read aloud by a text-to-speech engine.
+You MUST respond with plain text only — no markdown, no bullet points, no numbered lists, no formatting.
+Write your response exactly as a human would speak it, like a radio transcript.
+When listing items, group them in natural phrases: "You've got Mercury, Venus, Earth, and Mars for the inner planets. Then Jupiter, Saturn, Uranus, and Neptune for the outer ones."
+Never list items one per line or one per sentence. Group related items together in spoken phrases.
+Use short sentences with periods between them for pacing.
+Keep responses short and conversational — 3-5 sentences max.
 Natural spoken language only. Like a real phone call."""
 
 # Filler phrases spoken while waiting for slow LLM responses.
@@ -254,12 +259,9 @@ class TARSAgent(Agent):
                     yield chunk
                     continue
                 buf += chunk
-                # Flush on sentence boundaries for low latency
-                while re.search(r"[.!?]\s", buf):
-                    match = re.search(r"[.!?]\s", buf)
-                    sentence = buf[: match.end()]
-                    buf = buf[match.end() :]
-                    yield _preprocess_tts_text(sentence)
+            # Preprocess and yield the entire response as one chunk —
+            # the framework's StreamAdapter handles sentence-level TTS splitting,
+            # and Kokoro uses the punctuation within for pacing.
             if buf:
                 yield _preprocess_tts_text(buf)
 
