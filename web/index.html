@@ -20,7 +20,17 @@
             padding: 40px;
         }
         h1 { font-size: 2em; margin-bottom: 10px; }
-        #status { color: #888; margin: 20px 0; }
+        #status { color: #888; margin: 20px 0; font-size: 1.1em; }
+        #agentState {
+            font-size: 0.95em;
+            color: #666;
+            margin: 8px 0 16px;
+            min-height: 1.4em;
+            transition: color 0.3s;
+        }
+        #agentState.listening { color: #4a9eff; }
+        #agentState.thinking { color: #ffaa4a; }
+        #agentState.speaking { color: #4aff7f; }
         button {
             padding: 16px 48px;
             font-size: 1.2em;
@@ -37,16 +47,40 @@
             border-color: #ff4a4a;
             color: #ff4a4a;
         }
-        .pulse {
+        .indicator {
             width: 20px; height: 20px;
             border-radius: 50%;
             background: #4a9eff;
             margin: 20px auto;
+        }
+        .indicator.listening {
+            background: #4a9eff;
             animation: pulse 1.5s ease-in-out infinite;
+        }
+        .indicator.thinking {
+            background: #ffaa4a;
+            animation: spin 1s linear infinite;
+        }
+        .indicator.speaking {
+            background: #4aff7f;
+            animation: speak 0.6s ease-in-out infinite;
+        }
+        .indicator.idle {
+            background: #4a9eff;
+            animation: pulse 3s ease-in-out infinite;
         }
         @keyframes pulse {
             0%, 100% { transform: scale(1); opacity: 0.6; }
             50% { transform: scale(1.3); opacity: 1; }
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg) scale(1); opacity: 0.7; }
+            50% { transform: rotate(180deg) scale(1.2); opacity: 1; }
+            100% { transform: rotate(360deg) scale(1); opacity: 0.7; }
+        }
+        @keyframes speak {
+            0%, 100% { transform: scaleX(1) scaleY(1); opacity: 0.8; }
+            50% { transform: scaleX(1.4) scaleY(0.8); opacity: 1; }
         }
     </style>
 </head>
@@ -54,7 +88,8 @@
     <div class="container">
         <h1>TARS</h1>
         <p id="status">Ready to connect</p>
-        <div id="pulse" class="pulse" style="display:none"></div>
+        <div id="agentState"></div>
+        <div id="indicator" class="indicator" style="display:none"></div>
         <button id="connectBtn" onclick="toggleConnection()">Connect</button>
         <audio id="agentAudio" autoplay></audio>
     </div>
@@ -73,6 +108,31 @@
         let room = null;
         let connected = false;
 
+        const STATE_LABELS = {
+            initializing: 'Initializing...',
+            idle: 'Ready',
+            listening: 'Listening...',
+            thinking: 'Thinking...',
+            speaking: 'Speaking...',
+        };
+
+        function updateAgentState(state) {
+            const el = document.getElementById('agentState');
+            const indicator = document.getElementById('indicator');
+            el.textContent = STATE_LABELS[state] || '';
+            el.className = state || '';
+            // Update indicator animation class
+            indicator.className = 'indicator ' + (state || 'idle');
+        }
+
+        function handleAttributesChanged(changedAttributes, participant) {
+            const state = changedAttributes['lk.agent.state']
+                || (participant.attributes && participant.attributes['lk.agent.state']);
+            if (state) {
+                updateAgentState(state);
+            }
+        }
+
         async function toggleConnection() {
             if (connected) {
                 await disconnect();
@@ -84,13 +144,12 @@
         async function connect() {
             const btn = document.getElementById('connectBtn');
             const status = document.getElementById('status');
-            const pulse = document.getElementById('pulse');
+            const indicator = document.getElementById('indicator');
 
             btn.disabled = true;
             status.textContent = 'Connecting...';
 
             try {
-                // Get token from our simple token server
                 const resp = await fetch(TOKEN_URL);
                 const data = await resp.json();
 
@@ -104,11 +163,25 @@
                     }
                 });
 
+                // Listen for agent state changes via participant attributes
+                room.on(LivekitClient.RoomEvent.ParticipantAttributesChanged, handleAttributesChanged);
+
+                // Check existing participants for agent state on join
+                room.on(LivekitClient.RoomEvent.ParticipantConnected, (participant) => {
+                    const state = participant.attributes && participant.attributes['lk.agent.state'];
+                    if (state) updateAgentState(state);
+                });
+
                 await room.connect(LIVEKIT_URL, data.token, {
                     autoSubscribe: true,
                 });
 
-                // Publish microphone
+                // Check already-connected participants for agent state
+                room.remoteParticipants.forEach((participant) => {
+                    const state = participant.attributes && participant.attributes['lk.agent.state'];
+                    if (state) updateAgentState(state);
+                });
+
                 await room.localParticipant.setMicrophoneEnabled(true);
 
                 connected = true;
@@ -116,7 +189,7 @@
                 btn.textContent = 'Disconnect';
                 btn.classList.add('connected');
                 status.textContent = 'Connected - speak to TARS';
-                pulse.style.display = 'block';
+                indicator.style.display = 'block';
 
             } catch (e) {
                 console.error('Connection failed:', e);
@@ -135,7 +208,9 @@
             btn.textContent = 'Connect';
             btn.classList.remove('connected');
             document.getElementById('status').textContent = 'Disconnected';
-            document.getElementById('pulse').style.display = 'none';
+            document.getElementById('agentState').textContent = '';
+            document.getElementById('agentState').className = '';
+            document.getElementById('indicator').style.display = 'none';
         }
     </script>
 </body>

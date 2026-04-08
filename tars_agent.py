@@ -21,11 +21,13 @@ import json
 import os
 import logging
 import random
+import re
 import time
 from collections.abc import AsyncIterable
 from dotenv import load_dotenv
 import httpx
 
+from livekit import rtc
 from livekit.agents import (
     Agent,
     AgentSession,
@@ -115,6 +117,43 @@ async def _stream_openclaw(message: str, session_id: str) -> AsyncIterable[str]:
                 continue
 
 
+def _preprocess_tts_text(text: str) -> str:
+    """Clean markdown and improve punctuation for Kokoro TTS prosody."""
+    # Strip bold/italic markers
+    text = re.sub(r"\*{1,3}(.+?)\*{1,3}", r"\1", text)
+    # Strip inline code
+    text = re.sub(r"`(.+?)`", r"\1", text)
+    # Strip heading markers, add period after heading text
+    text = re.sub(r"^#{1,6}\s+(.+)$", r"\1.", text, flags=re.MULTILINE)
+    # Replace em dashes with commas
+    text = text.replace("—", ", ").replace("–", ", ")
+    # Convert numbered list items: "1. foo" -> "First, foo", etc.
+    ordinals = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth", "Tenth"]
+    def _replace_numbered(m: re.Match) -> str:
+        n = int(m.group(1))
+        prefix = ordinals[n - 1] + ", " if 1 <= n <= len(ordinals) else str(n) + ", "
+        return prefix
+    text = re.sub(r"^\s*(\d{1,2})\.\s+", _replace_numbered, text, flags=re.MULTILINE)
+    # Convert bullet list items: "- foo" or "* foo" -> sentence separator
+    text = re.sub(r"^\s*[-*]\s+", "\n", text, flags=re.MULTILINE)
+    # Add commas after common transitional words if missing
+    for word in ("However", "Also", "Additionally", "Furthermore", "Moreover", "Finally", "Meanwhile", "Otherwise"):
+        text = re.sub(rf"\b{word}\s(?!,)", f"{word}, ", text)
+    # Ensure each line ends with punctuation before collapsing
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        stripped = line.rstrip()
+        if stripped and stripped[-1] not in ".!?,;:":
+            lines[i] = stripped + "."
+    text = " ".join(lines)
+    # Collapse multiple spaces
+    text = re.sub(r"  +", " ", text)
+    # Clean up double punctuation from replacements
+    text = re.sub(r"\.\s*\.", ".", text)
+    text = re.sub(r",\s*,", ",", text)
+    return text.strip()
+
+
 class TARSAgent(Agent):
     """Voice frontend for the OpenClaw TARS agent."""
 
@@ -199,6 +238,34 @@ class TARSAgent(Agent):
             yield chunk
 
 
+    async def tts_node(
+        self,
+        text: AsyncIterable[str],
+        model_settings: ModelSettings,
+    ) -> AsyncIterable[rtc.AudioFrame]:
+        """Preprocess LLM text to improve Kokoro TTS prosody, then synthesize."""
+        async def _preprocess_stream() -> AsyncIterable[str]:
+            buf = ""
+            async for chunk in text:
+                if isinstance(chunk, FlushSentinel):
+                    if buf:
+                        yield _preprocess_tts_text(buf)
+                        buf = ""
+                    yield chunk
+                    continue
+                buf += chunk
+                # Flush on sentence boundaries for low latency
+                while re.search(r"[.!?]\s", buf):
+                    match = re.search(r"[.!?]\s", buf)
+                    sentence = buf[: match.end()]
+                    buf = buf[match.end() :]
+                    yield _preprocess_tts_text(sentence)
+            if buf:
+                yield _preprocess_tts_text(buf)
+
+        return Agent.default.tts_node(self, _preprocess_stream(), model_settings)
+
+
 server = AgentServer()
 
 
@@ -215,6 +282,7 @@ async def entrypoint(ctx: JobContext):
             base_url=WHISPER_BASE_URL,
             api_key="not-needed",
             language="en",
+            prompt="TARS is an AI assistant. Sarbloc is speaking to TARS about OpenClaw, Qdrant, and Home Assistant.",
         ),
 
         # LLM — placeholder so the framework activates the LLM pipeline;
