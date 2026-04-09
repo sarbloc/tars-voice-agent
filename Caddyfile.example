@@ -1,0 +1,33 @@
+# Example Caddyfile for HTTPS access to the TARS voice agent.
+# This is optional — only needed if you want to access the web UI
+# from other devices on your network (e.g. phone, tablet).
+#
+# Without Caddy, you can access the UI directly at http://localhost:8080
+# but microphone access requires HTTPS on non-localhost origins.
+#
+# Replace YOUR_HOSTNAME with your actual hostname or Tailscale domain.
+# Replace /path/to/certs with your TLS certificate paths.
+
+{
+	auto_https disable_redirects
+}
+
+https://YOUR_HOSTNAME:8443 {
+	tls /path/to/certs/cert.crt /path/to/certs/cert.key
+
+	# Token endpoint
+	handle /token {
+		reverse_proxy localhost:8080
+	}
+
+	# LiveKit WebSocket — upgrade to ws
+	@livekit path /rtc /rtc/*
+	handle @livekit {
+		reverse_proxy localhost:7880
+	}
+
+	# Web UI static files
+	handle {
+		reverse_proxy localhost:8080
+	}
+}

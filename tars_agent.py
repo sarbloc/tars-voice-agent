@@ -52,17 +52,26 @@ KOKORO_BASE_URL = os.getenv("KOKORO_BASE_URL", "http://192.168.50.13:8002/v1")
 TARS_VOICE = os.getenv("TARS_VOICE", "am_onyx")
 OPENCLAW_URL = os.getenv("OPENCLAW_URL", "http://127.0.0.1:18789/v1")
 OPENCLAW_TOKEN = os.getenv("OPENCLAW_GATEWAY_TOKEN", "")
+SESSION_ID = os.getenv("SESSION_ID", "voice-user")
+GREETING = os.getenv("GREETING_MESSAGE", "Hey, what's going on?")
+STT_PROMPT = os.getenv("STT_VOCABULARY_HINT", "")
 
 # Voice-only instructions — sent as system message to OpenClaw with every request.
 # Output is fed directly to a TTS engine that relies on punctuation for pacing.
 VOICE_INSTRUCTIONS = """This is a live voice call. Your response will be read aloud by a text-to-speech engine.
-You MUST respond with plain text only — no markdown, no bullet points, no numbered lists, no formatting.
-Write your response exactly as a human would speak it, like a radio transcript.
-When listing items, group them in natural phrases: "You've got Mercury, Venus, Earth, and Mars for the inner planets. Then Jupiter, Saturn, Uranus, and Neptune for the outer ones."
-Never list items one per line or one per sentence. Group related items together in spoken phrases.
-Use short sentences with periods between them for pacing.
-Keep responses short and conversational — 3-5 sentences max.
-Natural spoken language only. Like a real phone call."""
+Write like a radio presenter reading a transcript. Natural spoken English, not written English.
+Use commas and periods liberally — they control pacing in speech. A comma creates a short pause, a period creates a longer one.
+Use ellipses (…) when you want a dramatic pause or moment of thought.
+Use semicolons when you need a breath between two related ideas.
+Keep sentences short — two clauses maximum. Break longer thoughts into separate sentences.
+Write time ranges with 'to' — say '11am to 1pm', not '11am - 1pm'. The dash works but 'to' sounds more natural spoken aloud.
+Spell out abbreviations: 'Doctor', not 'Dr.'; 'versus', not 'vs.'.
+Write small numbers as words: 'three meetings', not '3 meetings'. Use digits for larger numbers: '150 people'.
+Use 'and' before the last item in any list.
+Never use colons to introduce a list. Instead say 'You have three meetings today. First… Second… And finally…'
+Never use markdown formatting — no asterisks, no hashes, no backticks, no bullet points.
+Never use tables or structured data formats. Describe data conversationally.
+Keep responses short and conversational — 3-5 sentences max."""
 
 # Filler phrases spoken while waiting for slow LLM responses.
 # Tone: dry, no-nonsense — consistent with TARS personality.
@@ -123,39 +132,57 @@ async def _stream_openclaw(message: str, session_id: str) -> AsyncIterable[str]:
 
 
 def _preprocess_tts_text(text: str) -> str:
-    """Clean markdown and improve punctuation for Kokoro TTS prosody."""
-    # Strip bold/italic markers
+    """Clean text for Kokoro TTS — strip markdown artifacts, preserve all punctuation.
+
+    Kokoro uses periods, commas, question marks, exclamation marks, semicolons,
+    ellipses, hyphens/dashes, colons, and parentheses for prosody and pacing.
+    All of these pass through untouched.
+    """
+    # --- Strip markdown formatting ---
+    # Bold/italic: **text**, *text*, __text__, _text_
     text = re.sub(r"\*{1,3}(.+?)\*{1,3}", r"\1", text)
-    # Strip inline code
+    text = re.sub(r"_{1,3}(.+?)_{1,3}", r"\1", text)
+    # Inline code and code blocks
+    text = re.sub(r"```[^`]*```", "", text, flags=re.DOTALL)
     text = re.sub(r"`(.+?)`", r"\1", text)
-    # Strip heading markers, add period after heading text
-    text = re.sub(r"^#{1,6}\s+(.+)$", r"\1.", text, flags=re.MULTILINE)
-    # Replace em dashes with commas
-    text = text.replace("—", ", ").replace("–", ", ")
-    # Convert numbered list items: "1. foo" -> "First, foo", etc.
-    ordinals = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth", "Tenth"]
-    def _replace_numbered(m: re.Match) -> str:
-        n = int(m.group(1))
-        prefix = ordinals[n - 1] + ", " if 1 <= n <= len(ordinals) else str(n) + ", "
-        return prefix
-    text = re.sub(r"^\s*(\d{1,2})\.\s+", _replace_numbered, text, flags=re.MULTILINE)
-    # Convert bullet list items: "- foo" or "* foo" -> sentence separator
-    text = re.sub(r"^\s*[-*]\s+", "\n", text, flags=re.MULTILINE)
-    # Add commas after common transitional words if missing
-    for word in ("However", "Also", "Additionally", "Furthermore", "Moreover", "Finally", "Meanwhile", "Otherwise"):
-        text = re.sub(rf"\b{word}\s(?!,)", f"{word}, ", text)
-    # Ensure each line ends with punctuation before collapsing
-    lines = text.split("\n")
-    for i, line in enumerate(lines):
-        stripped = line.rstrip()
-        if stripped and stripped[-1] not in ".!?,;:":
-            lines[i] = stripped + "."
+    # Heading markers (strip #, keep the text)
+    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+    # Bullet list markers at start of line only (- item or * item)
+    # NOT mid-sentence hyphens like "11am - 1pm"
+    text = re.sub(r"^\s*[-*]\s+", "", text, flags=re.MULTILINE)
+    # Numbered list markers at start of line (1. item, 2. item)
+    text = re.sub(r"^\s*\d+\.\s+", "", text, flags=re.MULTILINE)
+    # Strip emojis (Unicode emoji ranges)
+    text = re.sub(
+        r"[\U0001F600-\U0001F64F"  # emoticons
+        r"\U0001F300-\U0001F5FF"   # symbols & pictographs
+        r"\U0001F680-\U0001F6FF"   # transport & map
+        r"\U0001F1E0-\U0001F1FF"   # flags
+        r"\U00002702-\U000027B0"   # dingbats
+        r"\U0000FE00-\U0000FE0F"   # variation selectors
+        r"\U0001F900-\U0001F9FF"   # supplemental symbols
+        r"\U0001FA00-\U0001FA6F"   # chess symbols
+        r"\U0001FA70-\U0001FAFF"   # symbols extended-A
+        r"\U00002600-\U000026FF"   # misc symbols
+        r"]+", "", text)
+
+    # --- Normalize things Kokoro struggles with ---
+    # Common abbreviations
+    abbreviations = {
+        "Dr.": "Doctor", "Mr.": "Mister", "Mrs.": "Missus", "Ms.": "Miss",
+        "vs.": "versus", "etc.": "et cetera", "approx.": "approximately",
+        "dept.": "department", "govt.": "government",
+    }
+    for abbr, expansion in abbreviations.items():
+        text = text.replace(abbr, expansion)
+
+    # --- Clean up whitespace ---
+    # Collapse blank lines and extra whitespace from stripped markers
+    text = re.sub(r"\n\s*\n", "\n", text)
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
     text = " ".join(lines)
     # Collapse multiple spaces
     text = re.sub(r"  +", " ", text)
-    # Clean up double punctuation from replacements
-    text = re.sub(r"\.\s*\.", ".", text)
-    text = re.sub(r",\s*,", ",", text)
     return text.strip()
 
 
@@ -165,10 +192,10 @@ class TARSAgent(Agent):
     def __init__(self):
         super().__init__(instructions=VOICE_INSTRUCTIONS)
         # Stable session — avoids expensive agent re-initialization on each connection
-        self._session_id = "sarbloc-voice"
+        self._session_id = SESSION_ID
 
     async def on_enter(self):
-        self.session.say("Hey Sarbloc, what's going on?")
+        self.session.say(GREETING)
 
     async def llm_node(
         self,
@@ -284,7 +311,7 @@ async def entrypoint(ctx: JobContext):
             base_url=WHISPER_BASE_URL,
             api_key="not-needed",
             language="en",
-            prompt="TARS is an AI assistant. Sarbloc is speaking to TARS about OpenClaw, Qdrant, and Home Assistant.",
+            prompt=STT_PROMPT or "TARS is an AI voice assistant.",
         ),
 
         # LLM — placeholder so the framework activates the LLM pipeline;

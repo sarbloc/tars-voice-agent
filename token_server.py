@@ -13,6 +13,7 @@ load_dotenv()
 
 LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY", "devkey")
 LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "secret")
+LIVEKIT_IDENTITY = os.getenv("LIVEKIT_IDENTITY", "user")
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
 
@@ -24,7 +25,7 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/token":
             token = (
                 AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
-                .with_identity("sarbloc")
+                .with_identity(LIVEKIT_IDENTITY)
                 .with_grants(VideoGrants(room_join=True, room="tars-room"))
                 .to_jwt()
             )
