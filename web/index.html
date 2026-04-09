@@ -1,105 +1,361 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>TARS Voice Assistant</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#09090b">
+    <title>TARS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.js"></script>
     <style>
-        body {
-            font-family: -apple-system, sans-serif;
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #09090b;
+            --surface: #131316;
+            --border: #1e1e23;
+            --text-primary: #e4e4e7;
+            --text-secondary: #71717a;
+            --text-dim: #3f3f46;
+            --amber: #d4a043;
+            --amber-dim: #d4a04320;
+            --amber-glow: #d4a04340;
+            --blue: #5b8def;
+            --blue-dim: #5b8def20;
+            --green: #4ade80;
+            --green-dim: #4ade8020;
+            --orange: #f59e0b;
+            --orange-dim: #f59e0b20;
+            --ring-size: min(280px, 60vw);
+            --safe-bottom: env(safe-area-inset-bottom, 0px);
+            --safe-top: env(safe-area-inset-top, 0px);
+        }
+
+        html, body {
+            height: 100%;
+            overflow: hidden;
+            background: var(--bg);
+            color: var(--text-primary);
+            font-family: 'Geist Mono', monospace;
+            -webkit-font-smoothing: antialiased;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+
+        /* Subtle noise texture overlay */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            opacity: 0.03;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+            background-size: 256px;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        /* Scan line effect */
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0, 0, 0, 0.03) 2px,
+                rgba(0, 0, 0, 0.03) 4px
+            );
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .viewport {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            padding: calc(24px + var(--safe-top)) 24px calc(24px + var(--safe-bottom));
+            position: relative;
+        }
+
+        /* === Header === */
+        .header {
+            position: absolute;
+            top: calc(20px + var(--safe-top));
+            left: 24px;
+            right: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+        }
+
+        .wordmark {
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0.2em;
+            color: var(--text-dim);
+            text-transform: uppercase;
+        }
+
+        .build {
+            font-size: 11px;
+            color: var(--text-dim);
+            letter-spacing: 0.05em;
+        }
+
+        /* === Central ring === */
+        .ring-container {
+            position: relative;
+            width: var(--ring-size);
+            height: var(--ring-size);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        .ring-container:active { transform: scale(0.97); }
+
+        /* Outer glow */
+        .ring-glow {
+            position: absolute;
+            inset: -20%;
+            border-radius: 50%;
+            background: radial-gradient(circle, var(--amber-glow) 0%, transparent 70%);
+            opacity: 0;
+            transition: opacity 0.8s ease;
+        }
+
+        .ring-container.active .ring-glow { opacity: 1; }
+
+        /* SVG ring */
+        .ring-svg {
+            width: 100%;
+            height: 100%;
+            transform: rotate(-90deg);
+        }
+
+        .ring-track {
+            fill: none;
+            stroke: var(--border);
+            stroke-width: 1.5;
+        }
+
+        .ring-progress {
+            fill: none;
+            stroke: var(--amber);
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-dasharray: 565.48;
+            stroke-dashoffset: 565.48;
+            transition: stroke-dashoffset 0.6s ease, stroke 0.4s ease;
+            filter: drop-shadow(0 0 6px var(--amber-dim));
+        }
+
+        /* Ring SVG — JS drives transform + opacity for audio-reactive states */
+        .ring-svg {
+            transition: transform 0.08s ease-out, opacity 0.08s ease-out;
+        }
+
+        /* Ring states */
+        .ring-container.listening .ring-progress {
+            stroke-dashoffset: 0;
+            stroke: var(--blue);
+            filter: drop-shadow(0 0 8px var(--blue-dim));
+        }
+
+        .ring-container.thinking .ring-progress {
+            stroke: var(--orange);
+            filter: drop-shadow(0 0 8px var(--orange-dim));
+            animation: ring-think 1.2s linear infinite;
+        }
+
+        .ring-container.speaking .ring-progress {
+            stroke-dashoffset: 0;
+            stroke: var(--green);
+            filter: drop-shadow(0 0 8px var(--green-dim));
+        }
+
+        .ring-container.idle .ring-progress {
+            stroke-dashoffset: 0;
+            stroke: var(--amber);
+        }
+
+        /* CSS fallback animations for non-audio-reactive states */
+        .ring-container.idle .ring-svg {
+            animation: ring-idle 4s ease-in-out infinite;
+        }
+
+        @keyframes ring-think {
+            0% { stroke-dashoffset: 400; }
+            100% { stroke-dashoffset: -165; }
+        }
+
+        @keyframes ring-idle {
+            0%, 100% { transform: rotate(-90deg) scale(0.85); opacity: 0.4; }
+            50% { transform: rotate(-90deg) scale(1.0); opacity: 0.7; }
+        }
+
+        /* Center content inside ring */
+        .ring-center {
+            position: absolute;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            pointer-events: none;
+        }
+
+        .ring-icon {
+            width: 32px;
+            height: 32px;
+            color: var(--text-dim);
+            transition: color 0.4s ease;
+        }
+
+        .ring-container.active .ring-icon { color: var(--amber); }
+        .ring-container.listening .ring-icon { color: var(--blue); }
+        .ring-container.thinking .ring-icon { color: var(--orange); }
+        .ring-container.speaking .ring-icon { color: var(--green); }
+
+        .ring-label {
+            font-size: 11px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            transition: color 0.3s ease;
+        }
+
+        /* === Status area === */
+        .status-area {
+            margin-top: 40px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .status-text {
+            font-size: 13px;
+            color: var(--text-secondary);
+            letter-spacing: 0.04em;
+            transition: color 0.3s ease;
+            min-height: 1.4em;
+        }
+
+        .status-text.error { color: #ef4444; }
+
+        .agent-state {
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            min-height: 1.2em;
+            transition: color 0.3s ease;
+            color: var(--text-dim);
+        }
+
+        .agent-state.listening { color: var(--blue); }
+        .agent-state.thinking { color: var(--orange); }
+        .agent-state.speaking { color: var(--green); }
+
+        /* === Footer === */
+        .footer {
+            position: absolute;
+            bottom: calc(20px + var(--safe-bottom));
+            left: 24px;
+            right: 24px;
             display: flex;
             justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            background: #0a0a0a;
-            color: #e0e0e0;
         }
-        .container {
-            text-align: center;
-            padding: 40px;
+
+        .footer-text {
+            font-size: 10px;
+            color: var(--text-dim);
+            letter-spacing: 0.05em;
         }
-        h1 { font-size: 2em; margin-bottom: 10px; }
-        #status { color: #888; margin: 20px 0; font-size: 1.1em; }
-        #agentState {
-            font-size: 0.95em;
-            color: #666;
-            margin: 8px 0 16px;
-            min-height: 1.4em;
-            transition: color 0.3s;
+
+        /* === Responsive === */
+        @media (max-width: 480px) {
+            :root { --ring-size: min(240px, 65vw); }
+            .status-area { margin-top: 32px; }
+            .wordmark { font-size: 12px; }
         }
-        #agentState.listening { color: #4a9eff; }
-        #agentState.thinking { color: #ffaa4a; }
-        #agentState.speaking { color: #4aff7f; }
-        button {
-            padding: 16px 48px;
-            font-size: 1.2em;
-            border: 2px solid #4a9eff;
-            background: transparent;
-            color: #4a9eff;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.2s;
+
+        @media (max-height: 600px) {
+            :root { --ring-size: min(200px, 45vh); }
+            .status-area { margin-top: 24px; }
         }
-        button:hover { background: #4a9eff22; }
-        button:disabled { opacity: 0.3; cursor: not-allowed; }
-        button.connected {
-            border-color: #ff4a4a;
-            color: #ff4a4a;
+
+        @media (min-width: 768px) {
+            :root { --ring-size: 320px; }
         }
-        .indicator {
-            width: 20px; height: 20px;
-            border-radius: 50%;
-            background: #4a9eff;
-            margin: 20px auto;
+
+        /* Prevent pull-to-refresh on mobile */
+        @media (pointer: coarse) {
+            body { overscroll-behavior: none; }
         }
-        .indicator.listening {
-            background: #4a9eff;
-            animation: pulse 1.5s ease-in-out infinite;
+
+        /* Fade-in on load */
+        .viewport {
+            animation: fadeIn 0.8s ease both;
         }
-        .indicator.thinking {
-            background: #ffaa4a;
-            animation: spin 1s linear infinite;
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
         }
-        .indicator.speaking {
-            background: #4aff7f;
-            animation: speak 0.6s ease-in-out infinite;
-        }
-        .indicator.idle {
-            background: #4a9eff;
-            animation: pulse 3s ease-in-out infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); opacity: 0.6; }
-            50% { transform: scale(1.3); opacity: 1; }
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg) scale(1); opacity: 0.7; }
-            50% { transform: rotate(180deg) scale(1.2); opacity: 1; }
-            100% { transform: rotate(360deg) scale(1); opacity: 0.7; }
-        }
-        @keyframes speak {
-            0%, 100% { transform: scaleX(1) scaleY(1); opacity: 0.8; }
-            50% { transform: scaleX(1.4) scaleY(0.8); opacity: 1; }
-        }
+
+        /* Hidden audio */
+        audio { display: none; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>TARS</h1>
-        <p id="status">Ready to connect</p>
-        <div id="agentState"></div>
-        <div id="indicator" class="indicator" style="display:none"></div>
-        <button id="connectBtn" onclick="toggleConnection()">Connect</button>
+    <div class="viewport">
+        <div class="header">
+            <span class="wordmark">TARS</span>
+            <span class="build">voice v1</span>
+        </div>
+
+        <div id="ring" class="ring-container" onclick="toggleConnection()" role="button" tabindex="0" aria-label="Connect to TARS">
+            <div class="ring-glow"></div>
+            <svg class="ring-svg" viewBox="0 0 200 200">
+                <circle class="ring-track" cx="100" cy="100" r="90" />
+                <circle class="ring-progress" cx="100" cy="100" r="90" />
+            </svg>
+            <div class="ring-center">
+                <!-- Mic icon -->
+                <svg class="ring-icon" id="ringIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                    <line x1="12" y1="19" x2="12" y2="22"/>
+                </svg>
+                <span class="ring-label" id="ringLabel">tap to connect</span>
+            </div>
+        </div>
+
+        <div class="status-area">
+            <div class="status-text" id="status">Ready</div>
+            <div class="agent-state" id="agentState"></div>
+        </div>
+
+        <div class="footer">
+            <span class="footer-text">livekit + whisper + kokoro</span>
+        </div>
+
         <audio id="agentAudio" autoplay></audio>
     </div>
 
     <script>
         // --- CONFIGURATION ---
-        // Use current hostname so it works from any device on LAN
         const LK_HOST = window.location.hostname;
-        // When served over HTTPS (via Caddy), use wss through the same proxy
-        // Caddy proxies /rtc* to LiveKit on port 7880
         const LK_PROTO = window.location.protocol === 'https:' ? 'wss' : 'ws';
         const LK_PORT = window.location.protocol === 'https:' ? window.location.port : '7880';
         const LIVEKIT_URL = LK_PROTO + '://' + LK_HOST + ':' + LK_PORT;
@@ -108,21 +364,158 @@
         let room = null;
         let connected = false;
 
+        const ring = document.getElementById('ring');
+        const ringLabel = document.getElementById('ringLabel');
+        const statusEl = document.getElementById('status');
+        const agentStateEl = document.getElementById('agentState');
+        const ringSvg = document.querySelector('.ring-svg');
+        const ringGlow = document.querySelector('.ring-glow');
+
         const STATE_LABELS = {
-            initializing: 'Initializing...',
+            initializing: 'Initializing',
             idle: 'Ready',
-            listening: 'Listening...',
-            thinking: 'Thinking...',
-            speaking: 'Speaking...',
+            listening: 'Listening',
+            thinking: 'Thinking',
+            speaking: 'Speaking',
         };
 
+        // --- AUDIO METERING ---
+        let audioCtx = null;
+        let micAnalyser = null;
+        let outputAnalyser = null;
+        let micAnalyserData = null;
+        let outputAnalyserData = null;
+        let smoothedLevel = 0;
+        let animFrameId = null;
+        let currentAgentState = '';
+
+        function ensureAudioContext() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            return audioCtx;
+        }
+
+        function setupMicMeter() {
+            try {
+                const micPub = room.localParticipant.getTrackPublication(
+                    LivekitClient.Track.Source.Microphone
+                );
+                if (!micPub || !micPub.track) return;
+
+                const ctx = ensureAudioContext();
+                const stream = new MediaStream([micPub.track.mediaStreamTrack]);
+                const source = ctx.createMediaStreamSource(stream);
+                micAnalyser = ctx.createAnalyser();
+                micAnalyser.fftSize = 256;
+                micAnalyser.smoothingTimeConstant = 0.3;
+                source.connect(micAnalyser);
+                micAnalyserData = new Uint8Array(micAnalyser.frequencyBinCount);
+            } catch (e) {
+                console.warn('Mic meter setup failed:', e);
+            }
+        }
+
+        function setupOutputMeter(track) {
+            // Use the remote audio track's MediaStreamTrack directly —
+            // createMediaElementSource breaks when LiveKit replaces srcObject.
+            try {
+                const ctx = ensureAudioContext();
+                const stream = new MediaStream([track.mediaStreamTrack]);
+                const source = ctx.createMediaStreamSource(stream);
+                outputAnalyser = ctx.createAnalyser();
+                outputAnalyser.fftSize = 256;
+                outputAnalyser.smoothingTimeConstant = 0.3;
+                source.connect(outputAnalyser);
+                // No need to connect to destination — the <audio> element handles playback
+                outputAnalyserData = new Uint8Array(outputAnalyser.frequencyBinCount);
+            } catch (e) {
+                console.warn('Output meter setup failed:', e);
+            }
+        }
+
+        function getLevel(analyser, dataArray) {
+            if (!analyser || !dataArray) return 0;
+            analyser.getByteFrequencyData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+                const v = dataArray[i] / 255;
+                sum += v * v;
+            }
+            return Math.sqrt(sum / dataArray.length);
+        }
+
+        function animateRing() {
+            animFrameId = requestAnimationFrame(animateRing);
+
+            let rawLevel = 0;
+            if (currentAgentState === 'listening' && micAnalyser) {
+                rawLevel = getLevel(micAnalyser, micAnalyserData);
+            } else if (currentAgentState === 'speaking' && outputAnalyser) {
+                rawLevel = getLevel(outputAnalyser, outputAnalyserData);
+            } else {
+                // Not in an audio-reactive state — clear inline styles, let CSS take over
+                ringSvg.style.transform = '';
+                ringSvg.style.opacity = '';
+                ringGlow.style.opacity = '';
+                smoothedLevel = 0;
+                return;
+            }
+
+            // Smooth the level (exponential moving average)
+            smoothedLevel += (rawLevel - smoothedLevel) * 0.25;
+            const level = smoothedLevel;
+
+            // Scale: 0.5 at silence → 1.7 at loud (breathes from centre)
+            const scale = 0.5 + level * 1.2;
+            ringSvg.style.transform = `rotate(-90deg) scale(${scale.toFixed(3)})`;
+
+            // Opacity: 0.35 at silence → 1.0 at loud
+            const opacity = 0.35 + level * 0.65;
+            ringSvg.style.opacity = opacity.toFixed(2);
+
+            // Glow intensity tracks level
+            const glowOpacity = 0.2 + level * 0.8;
+            ringGlow.style.opacity = glowOpacity.toFixed(2);
+        }
+
+        function startAnimationLoop() {
+            if (!animFrameId) {
+                animateRing();
+            }
+        }
+
+        function stopAnimationLoop() {
+            if (animFrameId) {
+                cancelAnimationFrame(animFrameId);
+                animFrameId = null;
+            }
+            ringSvg.style.transform = '';
+            ringSvg.style.opacity = '';
+            ringGlow.style.opacity = '';
+            smoothedLevel = 0;
+        }
+
+        // --- STATE MANAGEMENT ---
+
         function updateAgentState(state) {
-            const el = document.getElementById('agentState');
-            const indicator = document.getElementById('indicator');
-            el.textContent = STATE_LABELS[state] || '';
-            el.className = state || '';
-            // Update indicator animation class
-            indicator.className = 'indicator ' + (state || 'idle');
+            currentAgentState = state;
+            agentStateEl.textContent = STATE_LABELS[state] || '';
+            agentStateEl.className = 'agent-state ' + (state || '');
+
+            // Update ring state classes
+            ring.classList.remove('idle', 'listening', 'thinking', 'speaking');
+            if (state && connected) {
+                ring.classList.add(state);
+            }
+
+            // Start/stop audio-reactive animation
+            if ((state === 'listening' || state === 'speaking') && connected) {
+                startAnimationLoop();
+            }
         }
 
         function handleAttributesChanged(changedAttributes, participant) {
@@ -133,6 +526,14 @@
             }
         }
 
+        // Keyboard accessibility
+        ring.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                toggleConnection();
+            }
+        });
+
         async function toggleConnection() {
             if (connected) {
                 await disconnect();
@@ -142,12 +543,10 @@
         }
 
         async function connect() {
-            const btn = document.getElementById('connectBtn');
-            const status = document.getElementById('status');
-            const indicator = document.getElementById('indicator');
-
-            btn.disabled = true;
-            status.textContent = 'Connecting...';
+            ring.style.pointerEvents = 'none';
+            statusEl.textContent = 'Connecting...';
+            statusEl.className = 'status-text';
+            ringLabel.textContent = 'connecting';
 
             try {
                 const resp = await fetch(TOKEN_URL);
@@ -155,28 +554,23 @@
 
                 room = new LivekitClient.Room();
 
-                // Handle agent audio
                 room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, pub, participant) => {
                     if (track.kind === 'audio') {
-                        const audioEl = document.getElementById('agentAudio');
-                        track.attach(audioEl);
+                        track.attach(document.getElementById('agentAudio'));
+                        // Wire up output meter from the remote track directly
+                        setupOutputMeter(track);
                     }
                 });
 
-                // Listen for agent state changes via participant attributes
                 room.on(LivekitClient.RoomEvent.ParticipantAttributesChanged, handleAttributesChanged);
 
-                // Check existing participants for agent state on join
                 room.on(LivekitClient.RoomEvent.ParticipantConnected, (participant) => {
                     const state = participant.attributes && participant.attributes['lk.agent.state'];
                     if (state) updateAgentState(state);
                 });
 
-                await room.connect(LIVEKIT_URL, data.token, {
-                    autoSubscribe: true,
-                });
+                await room.connect(LIVEKIT_URL, data.token, { autoSubscribe: true });
 
-                // Check already-connected participants for agent state
                 room.remoteParticipants.forEach((participant) => {
                     const state = participant.attributes && participant.attributes['lk.agent.state'];
                     if (state) updateAgentState(state);
@@ -184,33 +578,51 @@
 
                 await room.localParticipant.setMicrophoneEnabled(true);
 
+                // Wire up mic meter
+                setupMicMeter();
+
                 connected = true;
-                btn.disabled = false;
-                btn.textContent = 'Disconnect';
-                btn.classList.add('connected');
-                status.textContent = 'Connected - speak to TARS';
-                indicator.style.display = 'block';
+                ring.classList.add('active');
+                ringLabel.textContent = 'tap to end';
+                statusEl.textContent = 'Connected';
+
+                // Set initial idle state
+                if (!agentStateEl.textContent) {
+                    updateAgentState('idle');
+                }
 
             } catch (e) {
                 console.error('Connection failed:', e);
-                status.textContent = 'Connection failed: ' + e.message;
-                btn.disabled = false;
+                statusEl.textContent = e.message || 'Connection failed';
+                statusEl.className = 'status-text error';
+                ringLabel.textContent = 'tap to retry';
             }
+
+            ring.style.pointerEvents = '';
         }
 
         async function disconnect() {
+            stopAnimationLoop();
+
             if (room) {
                 await room.disconnect();
                 room = null;
             }
+
+            // Clean up analysers (AudioContext persists for reuse)
+            micAnalyser = null;
+            micAnalyserData = null;
+            outputAnalyser = null;
+            outputAnalyserData = null;
+
             connected = false;
-            const btn = document.getElementById('connectBtn');
-            btn.textContent = 'Connect';
-            btn.classList.remove('connected');
-            document.getElementById('status').textContent = 'Disconnected';
-            document.getElementById('agentState').textContent = '';
-            document.getElementById('agentState').className = '';
-            document.getElementById('indicator').style.display = 'none';
+            currentAgentState = '';
+            ring.classList.remove('active', 'idle', 'listening', 'thinking', 'speaking');
+            ringLabel.textContent = 'tap to connect';
+            statusEl.textContent = 'Disconnected';
+            statusEl.className = 'status-text';
+            agentStateEl.textContent = '';
+            agentStateEl.className = 'agent-state';
         }
     </script>
 </body>

@@ -51,19 +51,17 @@ def ui_page(page: Page, server):
 
 class TestPageRendering:
     def test_title_visible(self, ui_page: Page):
-        expect(ui_page.locator("h1")).to_have_text("TARS")
+        expect(ui_page.locator(".wordmark")).to_have_text("TARS")
 
     def test_status_shows_ready(self, ui_page: Page):
-        expect(ui_page.locator("#status")).to_have_text("Ready to connect")
+        expect(ui_page.locator("#status")).to_have_text("Ready")
 
-    def test_connect_button_visible(self, ui_page: Page):
-        btn = ui_page.locator("#connectBtn")
-        expect(btn).to_be_visible()
-        expect(btn).to_have_text("Connect")
+    def test_ring_visible(self, ui_page: Page):
+        ring = ui_page.locator("#ring")
+        expect(ring).to_be_visible()
 
-    def test_indicator_hidden_initially(self, ui_page: Page):
-        indicator = ui_page.locator("#indicator")
-        expect(indicator).to_be_hidden()
+    def test_ring_label_shows_tap_to_connect(self, ui_page: Page):
+        expect(ui_page.locator("#ringLabel")).to_have_text("tap to connect")
 
     def test_agent_state_empty_initially(self, ui_page: Page):
         state = ui_page.locator("#agentState")
@@ -73,30 +71,34 @@ class TestPageRendering:
 class TestAgentStateIndicator:
     """Test the agent state JS functions by calling them directly."""
 
+    def _set_connected(self, page: Page):
+        """Simulate connected state so ring classes apply."""
+        page.evaluate("connected = true; ring.classList.add('active')")
+
     def test_update_agent_state_listening(self, ui_page: Page):
-        ui_page.evaluate("document.getElementById('indicator').style.display = 'block'")
+        self._set_connected(ui_page)
         ui_page.evaluate("updateAgentState('listening')")
         state = ui_page.locator("#agentState")
-        expect(state).to_have_text("Listening...")
+        expect(state).to_have_text("Listening")
         assert "listening" in ui_page.locator("#agentState").get_attribute("class")
-        assert "listening" in ui_page.locator("#indicator").get_attribute("class")
+        assert "listening" in ui_page.locator("#ring").get_attribute("class")
 
     def test_update_agent_state_thinking(self, ui_page: Page):
-        ui_page.evaluate("document.getElementById('indicator').style.display = 'block'")
+        self._set_connected(ui_page)
         ui_page.evaluate("updateAgentState('thinking')")
         state = ui_page.locator("#agentState")
-        expect(state).to_have_text("Thinking...")
-        assert "thinking" in ui_page.locator("#indicator").get_attribute("class")
+        expect(state).to_have_text("Thinking")
+        assert "thinking" in ui_page.locator("#ring").get_attribute("class")
 
     def test_update_agent_state_speaking(self, ui_page: Page):
-        ui_page.evaluate("document.getElementById('indicator').style.display = 'block'")
+        self._set_connected(ui_page)
         ui_page.evaluate("updateAgentState('speaking')")
         state = ui_page.locator("#agentState")
-        expect(state).to_have_text("Speaking...")
-        assert "speaking" in ui_page.locator("#indicator").get_attribute("class")
+        expect(state).to_have_text("Speaking")
+        assert "speaking" in ui_page.locator("#ring").get_attribute("class")
 
     def test_update_agent_state_idle(self, ui_page: Page):
-        ui_page.evaluate("document.getElementById('indicator').style.display = 'block'")
+        self._set_connected(ui_page)
         ui_page.evaluate("updateAgentState('idle')")
         state = ui_page.locator("#agentState")
         expect(state).to_have_text("Ready")
@@ -104,72 +106,95 @@ class TestAgentStateIndicator:
     def test_update_agent_state_initializing(self, ui_page: Page):
         ui_page.evaluate("updateAgentState('initializing')")
         state = ui_page.locator("#agentState")
-        expect(state).to_have_text("Initializing...")
+        expect(state).to_have_text("Initializing")
 
 
-class TestIndicatorAnimations:
-    """Verify CSS classes produce distinct animation names per state."""
+class TestRingStateClasses:
+    """Verify the ring element gets correct CSS classes per state."""
 
-    def _get_animation_name(self, page: Page, state: str) -> str:
-        page.evaluate(f"document.getElementById('indicator').style.display = 'block'")
+    def _set_connected(self, page: Page):
+        page.evaluate("connected = true; ring.classList.add('active')")
+
+    def test_listening_class(self, ui_page: Page):
+        self._set_connected(ui_page)
+        ui_page.evaluate("updateAgentState('listening')")
+        assert "listening" in ui_page.locator("#ring").get_attribute("class")
+
+    def test_thinking_class(self, ui_page: Page):
+        self._set_connected(ui_page)
+        ui_page.evaluate("updateAgentState('thinking')")
+        assert "thinking" in ui_page.locator("#ring").get_attribute("class")
+
+    def test_speaking_class(self, ui_page: Page):
+        self._set_connected(ui_page)
+        ui_page.evaluate("updateAgentState('speaking')")
+        assert "speaking" in ui_page.locator("#ring").get_attribute("class")
+
+    def test_idle_class(self, ui_page: Page):
+        self._set_connected(ui_page)
+        ui_page.evaluate("updateAgentState('idle')")
+        assert "idle" in ui_page.locator("#ring").get_attribute("class")
+
+    def test_state_switch_removes_previous(self, ui_page: Page):
+        self._set_connected(ui_page)
+        ui_page.evaluate("updateAgentState('listening')")
+        ui_page.evaluate("updateAgentState('speaking')")
+        classes = ui_page.locator("#ring").get_attribute("class")
+        assert "speaking" in classes
+        assert "listening" not in classes
+
+
+class TestRingColors:
+    """Verify each state applies the correct icon color (non-animated element)."""
+
+    def _set_connected(self, page: Page):
+        page.evaluate("connected = true; ring.classList.add('active')")
+
+    def _get_icon_color(self, page: Page, state: str) -> str:
+        self._set_connected(page)
+        # Disable transitions so computed color is immediate
+        page.evaluate("document.querySelector('.ring-icon').style.transition = 'none'")
         page.evaluate(f"updateAgentState('{state}')")
         return page.evaluate(
-            "window.getComputedStyle(document.getElementById('indicator')).animationName"
-        )
-
-    def test_listening_has_pulse_animation(self, ui_page: Page):
-        assert "pulse" in self._get_animation_name(ui_page, "listening")
-
-    def test_thinking_has_spin_animation(self, ui_page: Page):
-        assert "spin" in self._get_animation_name(ui_page, "thinking")
-
-    def test_speaking_has_speak_animation(self, ui_page: Page):
-        assert "speak" in self._get_animation_name(ui_page, "speaking")
-
-    def test_idle_has_pulse_animation(self, ui_page: Page):
-        assert "pulse" in self._get_animation_name(ui_page, "idle")
-
-
-class TestIndicatorColors:
-    """Verify each state gets a distinct indicator background color."""
-
-    def _get_bg_color(self, page: Page, state: str) -> str:
-        page.evaluate("document.getElementById('indicator').style.display = 'block'")
-        page.evaluate(f"updateAgentState('{state}')")
-        return page.evaluate(
-            "window.getComputedStyle(document.getElementById('indicator')).backgroundColor"
+            "window.getComputedStyle(document.querySelector('.ring-icon')).color"
         )
 
     def test_listening_is_blue(self, ui_page: Page):
-        color = self._get_bg_color(ui_page, "listening")
-        # #4a9eff = rgb(74, 158, 255)
-        assert "74, 158, 255" in color
+        color = self._get_icon_color(ui_page, "listening")
+        # --blue: #5b8def = rgb(91, 141, 239)
+        assert "91, 141, 239" in color
 
     def test_thinking_is_orange(self, ui_page: Page):
-        color = self._get_bg_color(ui_page, "thinking")
-        # #ffaa4a = rgb(255, 170, 74)
-        assert "255, 170, 74" in color
+        color = self._get_icon_color(ui_page, "thinking")
+        # --orange: #f59e0b = rgb(245, 158, 11)
+        assert "245, 158, 11" in color
 
     def test_speaking_is_green(self, ui_page: Page):
-        color = self._get_bg_color(ui_page, "speaking")
-        # #4aff7f = rgb(74, 255, 127)
-        assert "74, 255, 127" in color
+        color = self._get_icon_color(ui_page, "speaking")
+        # --green: #4ade80 = rgb(74, 222, 128)
+        assert "74, 222, 128" in color
 
 
 class TestDisconnectResetsState:
     """Verify the disconnect function clears agent state UI."""
 
     def test_disconnect_clears_agent_state(self, ui_page: Page):
-        # Simulate some state
-        ui_page.evaluate("updateAgentState('speaking')")
+        # Simulate connected + speaking state
         ui_page.evaluate("""
+            connected = true;
+            ring.classList.add('active');
+            updateAgentState('speaking');
+        """)
+        # Run disconnect logic (without actual room)
+        ui_page.evaluate("""
+            connected = false;
+            ring.classList.remove('active', 'idle', 'listening', 'thinking', 'speaking');
             document.getElementById('status').textContent = 'Disconnected';
             document.getElementById('agentState').textContent = '';
-            document.getElementById('agentState').className = '';
-            document.getElementById('indicator').style.display = 'none';
+            document.getElementById('agentState').className = 'agent-state';
         """)
         expect(ui_page.locator("#agentState")).to_have_text("")
-        expect(ui_page.locator("#indicator")).to_be_hidden()
+        assert "speaking" not in ui_page.locator("#ring").get_attribute("class")
 
 
 class TestHandleAttributesChanged:
@@ -182,7 +207,7 @@ class TestHandleAttributesChanged:
                 {attributes: {}}
             )
         """)
-        expect(ui_page.locator("#agentState")).to_have_text("Thinking...")
+        expect(ui_page.locator("#agentState")).to_have_text("Thinking")
 
     def test_falls_back_to_participant_attributes(self, ui_page: Page):
         ui_page.evaluate("""
@@ -191,7 +216,7 @@ class TestHandleAttributesChanged:
                 {attributes: {'lk.agent.state': 'speaking'}}
             )
         """)
-        expect(ui_page.locator("#agentState")).to_have_text("Speaking...")
+        expect(ui_page.locator("#agentState")).to_have_text("Speaking")
 
     def test_ignores_unrelated_attributes(self, ui_page: Page):
         ui_page.evaluate("updateAgentState('idle')")
