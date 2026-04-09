@@ -73,8 +73,10 @@ Never use markdown formatting — no asterisks, no hashes, no backticks, no bull
 Never use tables or structured data formats. Describe data conversationally.
 Keep responses short and conversational — 3-5 sentences max."""
 
-# Filler phrases spoken while waiting for slow LLM responses.
-# Tone: dry, no-nonsense — consistent with TARS personality.
+# Short filler words — spoken first while waiting for LLM response.
+SHORT_FILLERS = ["um... ", "ok... ", "yep... ", "hmm... "]
+
+# Longer filler phrases — spoken if the LLM is still not responding.
 FILLER_PHRASES = [
     "Let me check on that.",
     "Hold on a sec.",
@@ -230,26 +232,33 @@ class TARSAgent(Agent):
 
         # Filler phrases while waiting for the first LLM token.
         # Each fires at a cumulative timeout; FlushSentinel forces immediate TTS.
-        #   1.5s — "um..."
-        #   3.0s — random filler phrase
-        #   6.0s — second random filler phrase
+        # A "tars.filler" attribute tells the web UI to keep showing "thinking"
+        # instead of "speaking" while fillers play.
+        #   1.0s — random short filler ("um...", "ok...", etc.)
+        #   2.0s — random longer filler phrase
+        #   3.0s — second random filler phrase
         FILLER_SCHEDULE = [
-            (1.5, "um... "),
-            (1.5, None),  # None = pick random from FILLER_PHRASES
-            (3.0, None),
+            (1.0, None, SHORT_FILLERS),
+            (2.0, None, FILLER_PHRASES),
+            (3.0, None, FILLER_PHRASES),
         ]
 
+        room = self.session.room_io.room
         stream = _stream_openclaw(user_message, self._session_id).__aiter__()
         next_task = asyncio.ensure_future(anext(stream))
         first_chunk = None
+        used_filler = False
 
-        for timeout, phrase in FILLER_SCHEDULE:
+        for timeout, phrase, pool in FILLER_SCHEDULE:
             try:
                 first_chunk = await asyncio.wait_for(asyncio.shield(next_task), timeout=timeout)
                 logger.info("first token at %.2fs", time.monotonic() - t0)
                 break
             except asyncio.TimeoutError:
-                text = phrase if phrase else random.choice(FILLER_PHRASES) + " "
+                if not used_filler:
+                    await room.local_participant.set_attributes({"tars.filler": "true"})
+                    used_filler = True
+                text = phrase if phrase else random.choice(pool) + " "
                 logger.info("%.2fs, speaking filler: %s", time.monotonic() - t0, text.strip())
                 yield text
                 yield FlushSentinel()
@@ -264,6 +273,10 @@ class TARSAgent(Agent):
                 logger.info("first token at %.2fs", time.monotonic() - t0)
             except StopAsyncIteration:
                 return
+
+        # Clear filler flag — real content is starting
+        if used_filler:
+            await room.local_participant.set_attributes({"tars.filler": ""})
 
         yield first_chunk
         async for chunk in stream:

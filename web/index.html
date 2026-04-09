@@ -469,8 +469,8 @@
             smoothedLevel += (rawLevel - smoothedLevel) * 0.25;
             const level = smoothedLevel;
 
-            // Scale: 0.5 at silence → 1.7 at loud (breathes from centre)
-            const scale = 0.5 + level * 1.2;
+            // Scale: 0.7 at silence → 2.0 at loud (breathes from centre)
+            const scale = 0.7 + level * 1.3;
             ringSvg.style.transform = `rotate(-90deg) scale(${scale.toFixed(3)})`;
 
             // Opacity: 0.35 at silence → 1.0 at loud
@@ -500,27 +500,43 @@
         }
 
         // --- STATE MANAGEMENT ---
+        let isFiller = false; // true while agent is speaking a filler phrase
 
         function updateAgentState(state) {
             currentAgentState = state;
-            agentStateEl.textContent = STATE_LABELS[state] || '';
-            agentStateEl.className = 'agent-state ' + (state || '');
+
+            // When filler flag is set, override "speaking" → show "thinking" in the UI
+            const displayState = (state === 'speaking' && isFiller) ? 'thinking' : state;
+
+            agentStateEl.textContent = STATE_LABELS[displayState] || '';
+            agentStateEl.className = 'agent-state ' + (displayState || '');
 
             // Update ring state classes
             ring.classList.remove('idle', 'listening', 'thinking', 'speaking');
-            if (state && connected) {
-                ring.classList.add(state);
+            if (displayState && connected) {
+                ring.classList.add(displayState);
             }
 
             // Start/stop audio-reactive animation
-            if ((state === 'listening' || state === 'speaking') && connected) {
+            if ((displayState === 'listening' || displayState === 'speaking') && connected) {
                 startAnimationLoop();
             }
         }
 
         function handleAttributesChanged(changedAttributes, participant) {
-            const state = changedAttributes['lk.agent.state']
-                || (participant.attributes && participant.attributes['lk.agent.state']);
+            const attrs = participant.attributes || {};
+
+            // Check filler flag — when set, "speaking" state shows as "thinking"
+            if ('tars.filler' in changedAttributes) {
+                const wasFiller = isFiller;
+                isFiller = !!changedAttributes['tars.filler'];
+                // Re-apply current state if filler flag changed
+                if (wasFiller !== isFiller && currentAgentState) {
+                    updateAgentState(currentAgentState);
+                }
+            }
+
+            const state = changedAttributes['lk.agent.state'] || attrs['lk.agent.state'];
             if (state) {
                 updateAgentState(state);
             }
