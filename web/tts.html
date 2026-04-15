@@ -45,7 +45,7 @@
         .wrap {
             max-width: 720px;
             margin: 0 auto;
-            padding: 32px 20px 80px;
+            padding: calc(32px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right)) calc(80px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
             position: relative;
             z-index: 1;
         }
