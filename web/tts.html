@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#09090b">
+    <title>TARS · TTS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #09090b;
+            --surface: #131316;
+            --border: #1e1e23;
+            --text-primary: #e4e4e7;
+            --text-secondary: #71717a;
+            --text-dim: #3f3f46;
+            --amber: #d4a043;
+            --amber-dim: #d4a04320;
+            --red: #ef4444;
+        }
+
+        html, body {
+            min-height: 100%;
+            background: var(--bg);
+            color: var(--text-primary);
+            font-family: 'Geist Mono', monospace;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            opacity: 0.03;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+            background-size: 256px;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .wrap {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 32px 20px 80px;
+            position: relative;
+            z-index: 1;
+        }
+
+        header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            margin-bottom: 28px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        header h1 {
+            font-size: 18px;
+            font-weight: 500;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--amber);
+        }
+
+        header a {
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 6px 10px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            transition: color .15s, border-color .15s;
+        }
+        header a:hover { color: var(--amber); border-color: var(--amber-dim); }
+
+        label {
+            display: block;
+            font-size: 10px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 240px;
+            resize: vertical;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 14px;
+            line-height: 1.6;
+            padding: 14px 16px;
+            outline: none;
+            transition: border-color .15s;
+        }
+        textarea:focus { border-color: var(--amber-dim); }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 16px;
+            align-items: center;
+        }
+
+        select, input[type="text"] {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 12px;
+            padding: 10px 12px;
+            outline: none;
+        }
+        input[type="text"] { min-width: 180px; }
+
+        button {
+            background: var(--amber);
+            color: #09090b;
+            border: none;
+            border-radius: 6px;
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: 500;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            padding: 11px 20px;
+            cursor: pointer;
+            transition: opacity .15s, transform .1s;
+        }
+        button:hover:not(:disabled) { opacity: .9; }
+        button:active:not(:disabled) { transform: translateY(1px); }
+        button:disabled { opacity: .4; cursor: not-allowed; }
+
+        .status {
+            margin-top: 20px;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            min-height: 14px;
+        }
+        .status.error { color: var(--red); }
+
+        .result {
+            margin-top: 24px;
+            padding: 20px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            display: none;
+        }
+        .result.visible { display: block; }
+
+        audio {
+            width: 100%;
+            margin-bottom: 14px;
+        }
+
+        .meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        .meta a {
+            color: var(--amber);
+            text-decoration: none;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+        .meta a:hover { text-decoration: underline; }
+
+        .char-count {
+            font-size: 10px;
+            color: var(--text-dim);
+            margin-top: 6px;
+            text-align: right;
+            letter-spacing: 0.08em;
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <header>
+            <h1>TARS · TTS Studio</h1>
+            <a href="/">← Live</a>
+        </header>
+
+        <label for="text">Text</label>
+        <textarea id="text" placeholder="Paste or type the text to synthesize. Punctuation drives pacing — use it generously."></textarea>
+        <div class="char-count"><span id="count">0</span> chars</div>
+
+        <div class="controls">
+            <div>
+                <label for="voice" style="margin-bottom:4px">Voice</label>
+                <input id="voice" type="text" placeholder="am_onyx (default)">
+            </div>
+            <div>
+                <label for="format" style="margin-bottom:4px">Format</label>
+                <select id="format">
+                    <option value="wav">WAV</option>
+                    <option value="mp3">MP3</option>
+                    <option value="flac">FLAC</option>
+                    <option value="opus">Opus</option>
+                </select>
+            </div>
+            <div style="flex:1"></div>
+            <button id="go">Generate</button>
+        </div>
+
+        <div class="status" id="status"></div>
+
+        <div class="result" id="result">
+            <audio id="player" controls></audio>
+            <div class="meta">
+                <span id="info"></span>
+                <a id="download" download>Download</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const $ = (id) => document.getElementById(id);
+        const text = $("text"), voice = $("voice"), fmt = $("format");
+        const go = $("go"), status = $("status"), count = $("count");
+        const result = $("result"), player = $("player"), dl = $("download"), info = $("info");
+
+        let lastUrl = null;
+
+        text.addEventListener("input", () => { count.textContent = text.value.length; });
+
+        async function generate() {
+            const body = text.value.trim();
+            if (!body) {
+                status.textContent = "enter some text first";
+                status.classList.add("error");
+                return;
+            }
+            status.classList.remove("error");
+            status.textContent = "synthesizing…";
+            go.disabled = true;
+            result.classList.remove("visible");
+
+            const format = fmt.value;
+            const t0 = performance.now();
+            try {
+                const res = await fetch("/tts", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        text: body,
+                        voice: voice.value.trim() || undefined,
+                        format,
+                    }),
+                });
+                if (!res.ok) {
+                    const msg = await res.text().catch(() => "");
+                    throw new Error(`${res.status} ${msg || res.statusText}`);
+                }
+                const blob = await res.blob();
+                if (lastUrl) URL.revokeObjectURL(lastUrl);
+                lastUrl = URL.createObjectURL(blob);
+                player.src = lastUrl;
+                dl.href = lastUrl;
+                const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+                dl.download = `tars-${stamp}.${format}`;
+                const kb = (blob.size / 1024).toFixed(1);
+                const ms = Math.round(performance.now() - t0);
+                info.textContent = `${kb} KB · ${ms} ms · ${format}`;
+                result.classList.add("visible");
+                status.textContent = "ready";
+                player.play().catch(() => {});
+            } catch (e) {
+                console.error(e);
+                status.classList.add("error");
+                status.textContent = `failed — ${e.message}`;
+            } finally {
+                go.disabled = false;
+            }
+        }
+
+        go.addEventListener("click", generate);
+        text.addEventListener("keydown", (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") generate();
+        });
+    </script>
+</body>
+</html>
