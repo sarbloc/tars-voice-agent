@@ -189,6 +189,18 @@
             stroke: var(--amber);
         }
 
+        .ring-container.offline {
+            cursor: not-allowed;
+        }
+        .ring-container.offline .ring-progress {
+            stroke-dashoffset: 0;
+            stroke: #ef4444;
+            filter: drop-shadow(0 0 8px #ef444440);
+            opacity: 0.6;
+        }
+        .ring-container.offline .ring-icon { color: #ef4444; }
+        .ring-container.offline:active { transform: none; }
+
         /* CSS fallback animations for non-audio-reactive states */
         .ring-container.idle .ring-svg {
             animation: ring-idle 4s ease-in-out infinite;
@@ -321,7 +333,7 @@
     <div class="viewport">
         <div class="header">
             <span class="wordmark">TARS</span>
-            <span class="build">voice v1</span>
+            <a href="/tts.html" class="build" style="text-decoration:none;color:var(--text-dim)">TTS →</a>
         </div>
 
         <div id="ring" class="ring-container" onclick="toggleConnection()" role="button" tabindex="0" aria-label="Connect to TARS">
@@ -363,6 +375,46 @@
 
         let room = null;
         let connected = false;
+        let healthy = false;
+
+        async function checkHealth() {
+            try {
+                const resp = await fetch('/health', { cache: 'no-store' });
+                const data = await resp.json();
+                healthy = !!data.ok;
+                if (!healthy) {
+                    const down = [];
+                    if (!data.whisper?.ok) down.push('whisper');
+                    if (!data.kokoro?.ok) down.push('kokoro');
+                    setOffline(`${down.join(' + ')} unreachable`);
+                } else {
+                    clearOffline();
+                }
+                return healthy;
+            } catch (e) {
+                healthy = false;
+                setOffline('health check failed');
+                return false;
+            }
+        }
+
+        function setOffline(msg) {
+            if (connected) return;
+            ring.classList.add('offline');
+            ring.classList.remove('active', 'idle', 'listening', 'thinking', 'speaking');
+            ringLabel.textContent = 'offline';
+            statusEl.textContent = msg;
+            statusEl.className = 'status-text error';
+        }
+
+        function clearOffline() {
+            ring.classList.remove('offline');
+            if (!connected) {
+                ringLabel.textContent = 'tap to connect';
+                statusEl.textContent = 'Ready';
+                statusEl.className = 'status-text';
+            }
+        }
 
         const ring = document.getElementById('ring');
         const ringLabel = document.getElementById('ringLabel');
@@ -560,8 +612,17 @@
 
         async function connect() {
             ring.style.pointerEvents = 'none';
-            statusEl.textContent = 'Connecting...';
+            statusEl.textContent = 'Checking services...';
             statusEl.className = 'status-text';
+            ringLabel.textContent = 'checking';
+
+            const ok = await checkHealth();
+            if (!ok) {
+                ring.style.pointerEvents = '';
+                return;
+            }
+
+            statusEl.textContent = 'Connecting...';
             ringLabel.textContent = 'connecting';
 
             try {
@@ -587,11 +648,6 @@
 
                 await room.connect(LIVEKIT_URL, data.token, { autoSubscribe: true });
 
-                room.remoteParticipants.forEach((participant) => {
-                    const state = participant.attributes && participant.attributes['lk.agent.state'];
-                    if (state) updateAgentState(state);
-                });
-
                 await room.localParticipant.setMicrophoneEnabled(true);
 
                 // Wire up mic meter
@@ -602,10 +658,13 @@
                 ringLabel.textContent = 'tap to end';
                 statusEl.textContent = 'Connected';
 
-                // Set initial idle state
-                if (!agentStateEl.textContent) {
-                    updateAgentState('idle');
-                }
+                // Apply initial state from any already-connected agent
+                let initialState = null;
+                room.remoteParticipants.forEach((participant) => {
+                    const s = participant.attributes && participant.attributes['lk.agent.state'];
+                    if (s) initialState = s;
+                });
+                updateAgentState(initialState || 'idle');
 
             } catch (e) {
                 console.error('Connection failed:', e);
@@ -616,6 +675,9 @@
 
             ring.style.pointerEvents = '';
         }
+
+        checkHealth();
+        setInterval(() => { if (!connected) checkHealth(); }, 15000);
 
         async function disconnect() {
             stopAnimationLoop();
