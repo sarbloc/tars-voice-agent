@@ -17,6 +17,7 @@ LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY", "devkey")
 LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "secret")
 LIVEKIT_IDENTITY = os.getenv("LIVEKIT_IDENTITY", "user")
 KOKORO_BASE_URL = os.getenv("KOKORO_BASE_URL", "http://192.168.50.13:8002/v1")
+WHISPER_BASE_URL = os.getenv("WHISPER_BASE_URL", "http://192.168.50.13:8001/v1")
 TARS_VOICE = os.getenv("TARS_VOICE", "am_onyx")
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
@@ -25,7 +26,34 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB_DIR, **kwargs)
 
+    def _probe(self, base_url: str) -> dict:
+        url = f"{base_url.rstrip('/')}/models"
+        try:
+            req = urllib.request.Request(
+                url, headers={"Authorization": "Bearer not-needed"}
+            )
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                return {"ok": 200 <= resp.status < 500, "status": resp.status}
+        except urllib.error.HTTPError as e:
+            return {"ok": True, "status": e.code}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:120]}
+
     def do_GET(self):
+        if self.path == "/health":
+            whisper = self._probe(WHISPER_BASE_URL)
+            kokoro = self._probe(KOKORO_BASE_URL)
+            body = json.dumps({
+                "ok": whisper["ok"] and kokoro["ok"],
+                "whisper": whisper,
+                "kokoro": kokoro,
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == "/token":
             token = (
                 AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
