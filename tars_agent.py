@@ -18,6 +18,7 @@ multiprocessing.set_start_method("fork", force=True)
 
 import asyncio
 import json
+import uuid
 import os
 import logging
 import random
@@ -52,7 +53,7 @@ KOKORO_BASE_URL = os.getenv("KOKORO_BASE_URL", "http://192.168.50.13:8002/v1")
 TARS_VOICE = os.getenv("TARS_VOICE", "am_onyx")
 OPENCLAW_URL = os.getenv("OPENCLAW_URL", "http://127.0.0.1:18789/v1")
 OPENCLAW_TOKEN = os.getenv("OPENCLAW_GATEWAY_TOKEN", "")
-SESSION_ID = os.getenv("SESSION_ID", "voice-user")
+SESSION_ID_PREFIX = os.getenv("SESSION_ID_PREFIX", "voice")
 GREETING = os.getenv("GREETING_MESSAGE", "Hey, what's going on?")
 STT_PROMPT = os.getenv("STT_VOCABULARY_HINT", "")
 
@@ -193,8 +194,8 @@ class TARSAgent(Agent):
 
     def __init__(self):
         super().__init__(instructions=VOICE_INSTRUCTIONS)
-        # Stable session — avoids expensive agent re-initialization on each connection
-        self._session_id = SESSION_ID
+        self._session_id = f"{SESSION_ID_PREFIX}-{uuid.uuid4().hex[:8]}"
+        logger.info("new session: %s", self._session_id)
 
     async def on_enter(self):
         self.session.say(GREETING)
