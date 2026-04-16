@@ -57,6 +57,25 @@ SESSION_ID_PREFIX = os.getenv("SESSION_ID_PREFIX", "voice")
 GREETING = os.getenv("GREETING_MESSAGE", "Hey, what's going on?")
 STT_PROMPT = os.getenv("STT_VOCABULARY_HINT", "")
 
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("invalid float for %s=%r, using default %s", name, raw, default)
+        return default
+
+
+# VAD + interruption tuning — higher thresholds reject distant/cross-room speech
+# and brief background noise. Override via env vars.
+VAD_ACTIVATION_THRESHOLD = _env_float("VAD_ACTIVATION_THRESHOLD", 0.7)
+VAD_MIN_SPEECH_DURATION = _env_float("VAD_MIN_SPEECH_DURATION", 0.2)
+VAD_MIN_SILENCE_DURATION = _env_float("VAD_MIN_SILENCE_DURATION", 0.55)
+INTERRUPTION_MIN_DURATION = _env_float("INTERRUPTION_MIN_DURATION", 0.8)
+
 # Voice-only instructions — sent as system message to OpenClaw with every request.
 # Output is fed directly to a TTS engine that relies on punctuation for pacing.
 VOICE_INSTRUCTIONS = """This is a live voice call. Your response will be read aloud by a text-to-speech engine.
@@ -315,9 +334,25 @@ server = AgentServer()
 @server.rtc_session()
 async def entrypoint(ctx: JobContext):
     """Entry point — starts the TARS voice pipeline."""
+    logger.info(
+        "vad config: activation_threshold=%.2f min_speech=%.2fs min_silence=%.2fs; "
+        "interruption min_duration=%.2fs",
+        VAD_ACTIVATION_THRESHOLD,
+        VAD_MIN_SPEECH_DURATION,
+        VAD_MIN_SILENCE_DURATION,
+        INTERRUPTION_MIN_DURATION,
+    )
+
     session = AgentSession(
-        vad=silero.VAD.load(),
-        turn_detection=EnglishModel(),
+        vad=silero.VAD.load(
+            activation_threshold=VAD_ACTIVATION_THRESHOLD,
+            min_speech_duration=VAD_MIN_SPEECH_DURATION,
+            min_silence_duration=VAD_MIN_SILENCE_DURATION,
+        ),
+        turn_handling={
+            "turn_detection": EnglishModel(),
+            "interruption": {"min_duration": INTERRUPTION_MIN_DURATION},
+        },
 
         # STT — self-hosted Speaches (faster-whisper)
         stt=openai.STT(
