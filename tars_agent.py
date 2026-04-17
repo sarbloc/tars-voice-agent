@@ -98,7 +98,7 @@ VOICE_INSTRUCTIONS = """This is a live voice call. Your response is read aloud b
 Every sentence should sound like one natural breath. Aim for 8–14 words; split anything longer.
 Use ellipses (…) inside a sentence to mark the beat of a real pause — the kind a thoughtful person takes before the key word. Example: "It's there… on the second shelf." "Yeah… that's the one."
 Use em-dashes (—) for a quick aside or a self-correction. Example: "The meeting's at three — no, three-thirty."
-Use commas liberally to break up noun phrases and clauses. "So, looking at the calendar, you've got two things today." Three commas in a sentence is fine.
+Use commas to break up clauses, but at most three in one sentence. Past that, break into a new sentence — a comma-chain of four or more clauses sounds breathless when spoken. Example: instead of "So, looking at the calendar, you've got two meetings, and a demo, and then a break, which is good," say "So, looking at the calendar, you've got two meetings. Then a demo. Then a break — which is good."
 Semicolons are okay for two closely linked thoughts, but prefer a period and a fresh sentence.
 
 === Openers ===
@@ -180,6 +180,22 @@ async def _stream_openclaw(message: str, session_id: str) -> AsyncIterable[str]:
                 continue
 
 
+# Acronyms Kokoro pronounces correctly as a single word — skip spell-out.
+_SPOKEN_AS_WORD = frozenset({
+    "TARS",
+    "NASA", "NATO", "SCUBA", "LASER", "RADAR", "SONAR",
+    "AM", "PM", "OK", "ET", "EST", "PST", "GMT", "UTC",
+})
+
+
+def _spell_acronym(match: "re.Match[str]") -> str:
+    word = match.group(0)
+    if word in _SPOKEN_AS_WORD:
+        return word
+    # "GPU" -> "G.P.U." — periods force letter-by-letter pronunciation.
+    return ".".join(word) + "."
+
+
 def _preprocess_tts_text(text: str) -> str:
     """Clean text for Kokoro TTS — strip markdown artifacts, preserve all punctuation.
 
@@ -224,6 +240,13 @@ def _preprocess_tts_text(text: str) -> str:
     }
     for abbr, expansion in abbreviations.items():
         text = text.replace(abbr, expansion)
+
+    # Short ALL-CAPS runs (e.g. "GPU", "API") get periods between letters so
+    # Kokoro spells them instead of attempting a mangled word pronunciation.
+    # The whitelist below is for acronyms Kokoro already speaks correctly
+    # as words (TARS is our brand; NASA/NATO/SCUBA are canonically spoken
+    # as words; AM/PM/OK are short common words).
+    text = re.sub(r"\b[A-Z]{2,5}\b", _spell_acronym, text)
 
     # --- Clean up whitespace ---
     # Collapse blank lines and extra whitespace from stripped markers
