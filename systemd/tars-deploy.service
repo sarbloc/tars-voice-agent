@@ -1,0 +1,10 @@
+[Unit]
+Description=TARS auto-deploy (pull main and restart services)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sukh
+WorkingDirectory=/home/sukh/tars-voice-agent
+ExecStart=/home/sukh/tars-voice-agent/scripts/deploy.sh
