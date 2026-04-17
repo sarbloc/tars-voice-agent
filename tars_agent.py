@@ -87,6 +87,8 @@ VAD_MIN_SILENCE_DURATION = _env_float("VAD_MIN_SILENCE_DURATION", 0.55)
 INTERRUPTION_MIN_DURATION = _env_float("INTERRUPTION_MIN_DURATION", 0.8)
 # Extra delay after the turn detector decides you're done before committing the turn.
 TURN_ENDPOINTING_MIN_DELAY = _env_float("TURN_ENDPOINTING_MIN_DELAY", 0.4)
+# Kokoro playback speed multiplier — drop below 1.0 for more natural pacing.
+KOKORO_SPEED = _env_float("KOKORO_SPEED", 0.92)
 
 # Voice-only instructions — sent as system message to OpenClaw with every request.
 # Output is fed directly to a TTS engine that relies on punctuation for pacing.
@@ -348,12 +350,14 @@ async def entrypoint(ctx: JobContext):
     """Entry point — starts the TARS voice pipeline."""
     logger.info(
         "vad config: activation_threshold=%.2f min_speech=%.2fs min_silence=%.2fs; "
-        "interruption min_duration=%.2fs; turn endpointing min_delay=%.2fs",
+        "interruption min_duration=%.2fs; turn endpointing min_delay=%.2fs; "
+        "kokoro speed=%.2f",
         VAD_ACTIVATION_THRESHOLD,
         VAD_MIN_SPEECH_DURATION,
         VAD_MIN_SILENCE_DURATION,
         INTERRUPTION_MIN_DURATION,
         TURN_ENDPOINTING_MIN_DELAY,
+        KOKORO_SPEED,
     )
 
     session = AgentSession(
@@ -392,6 +396,7 @@ async def entrypoint(ctx: JobContext):
             base_url=KOKORO_BASE_URL,
             api_key="not-needed",
             response_format="wav",
+            speed=KOKORO_SPEED,
         ),
 
     )
