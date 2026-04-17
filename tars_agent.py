@@ -54,7 +54,17 @@ TARS_VOICE = os.getenv("TARS_VOICE", "am_onyx")
 OPENCLAW_URL = os.getenv("OPENCLAW_URL", "http://127.0.0.1:18789/v1")
 OPENCLAW_TOKEN = os.getenv("OPENCLAW_GATEWAY_TOKEN", "")
 SESSION_ID_PREFIX = os.getenv("SESSION_ID_PREFIX", "voice")
-GREETING = os.getenv("GREETING_MESSAGE", "Hey, what's going on?")
+_greetings_env = os.getenv("GREETING_MESSAGES") or os.getenv("GREETING_MESSAGE", "")
+if _greetings_env:
+    GREETINGS = [g.strip() for g in _greetings_env.split("|") if g.strip()]
+else:
+    GREETINGS = [
+        "Hey, what's going on?",
+        "Hey, what's up?",
+        "Hi. What do you need?",
+        "Yeah, I'm here. What's up?",
+        "Hey. What's on your mind?",
+    ]
 STT_PROMPT = os.getenv("STT_VOCABULARY_HINT", "")
 
 
@@ -75,6 +85,8 @@ VAD_ACTIVATION_THRESHOLD = _env_float("VAD_ACTIVATION_THRESHOLD", 0.7)
 VAD_MIN_SPEECH_DURATION = _env_float("VAD_MIN_SPEECH_DURATION", 0.2)
 VAD_MIN_SILENCE_DURATION = _env_float("VAD_MIN_SILENCE_DURATION", 0.55)
 INTERRUPTION_MIN_DURATION = _env_float("INTERRUPTION_MIN_DURATION", 0.8)
+# Extra delay after the turn detector decides you're done before committing the turn.
+TURN_ENDPOINTING_MIN_DELAY = _env_float("TURN_ENDPOINTING_MIN_DELAY", 0.4)
 
 # Voice-only instructions — sent as system message to OpenClaw with every request.
 # Output is fed directly to a TTS engine that relies on punctuation for pacing.
@@ -217,7 +229,7 @@ class TARSAgent(Agent):
         logger.info("new session: %s", self._session_id)
 
     async def on_enter(self):
-        self.session.say(GREETING)
+        self.session.say(random.choice(GREETINGS), allow_interruptions=False)
 
     async def llm_node(
         self,
@@ -336,11 +348,12 @@ async def entrypoint(ctx: JobContext):
     """Entry point — starts the TARS voice pipeline."""
     logger.info(
         "vad config: activation_threshold=%.2f min_speech=%.2fs min_silence=%.2fs; "
-        "interruption min_duration=%.2fs",
+        "interruption min_duration=%.2fs; turn endpointing min_delay=%.2fs",
         VAD_ACTIVATION_THRESHOLD,
         VAD_MIN_SPEECH_DURATION,
         VAD_MIN_SILENCE_DURATION,
         INTERRUPTION_MIN_DURATION,
+        TURN_ENDPOINTING_MIN_DELAY,
     )
 
     session = AgentSession(
@@ -352,6 +365,7 @@ async def entrypoint(ctx: JobContext):
         turn_handling={
             "turn_detection": EnglishModel(),
             "interruption": {"min_duration": INTERRUPTION_MIN_DURATION},
+            "endpointing": {"min_delay": TURN_ENDPOINTING_MIN_DELAY},
         },
 
         # STT — self-hosted Speaches (faster-whisper)
