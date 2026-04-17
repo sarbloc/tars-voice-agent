@@ -4,6 +4,7 @@ Serves the web UI, the /token endpoint, and a /tts proxy to Kokoro on port 8080.
 """
 
 import os
+import re
 import json
 import urllib.request
 import urllib.error
@@ -20,6 +21,28 @@ KOKORO_BASE_URL = os.getenv("KOKORO_BASE_URL", "http://192.168.50.13:8002/v1")
 WHISPER_BASE_URL = os.getenv("WHISPER_BASE_URL", "http://192.168.50.13:8001/v1")
 TARS_VOICE = os.getenv("TARS_VOICE", "am_onyx")
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+BLENDS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "blends.json")
+
+# Blend name: letter-led, alnum+underscore, max 40 chars — safe for URLs and filesystems.
+_BLEND_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{0,39}$")
+# Blend spec: Kokoro voice-combination syntax only (voice names, digits, + and parens).
+_BLEND_SPEC_RE = re.compile(r"^[a-zA-Z0-9_+() ]+$")
+
+
+def load_blends() -> dict:
+    try:
+        with open(BLENDS_FILE, "r") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_blends(data: dict) -> None:
+    tmp = BLENDS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2, sort_keys=True)
+    os.replace(tmp, BLENDS_FILE)
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -54,6 +77,39 @@ class Handler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if self.path == "/blends":
+            blends = load_blends()
+            body = json.dumps({
+                "blends": [{"name": n, "spec": s} for n, s in sorted(blends.items())],
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if self.path == "/voices":
+            try:
+                req = urllib.request.Request(
+                    f"{KOKORO_BASE_URL.rstrip('/')}/audio/voices",
+                    headers={"Authorization": "Bearer not-needed"},
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read())
+            except Exception as e:
+                print(f"[voices] proxy error: {e}")
+                self.send_error(502, "kokoro unreachable")
+                return
+            body = json.dumps({
+                "voices": data.get("voices", []),
+                "default": TARS_VOICE,
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "max-age=300")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == "/token":
             token = (
                 AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
@@ -68,7 +124,48 @@ class Handler(SimpleHTTPRequestHandler):
         else:
             super().do_GET()
 
+    def do_DELETE(self):
+        if self.path.startswith("/blends/"):
+            name = self.path[len("/blends/"):]
+            if not _BLEND_NAME_RE.match(name):
+                self.send_error(400, "invalid name")
+                return
+            blends = load_blends()
+            if name not in blends:
+                self.send_error(404, "not found")
+                return
+            del blends[name]
+            save_blends(blends)
+            self.send_response(204)
+            self.end_headers()
+            return
+        self.send_error(404)
+
     def do_POST(self):
+        if self.path == "/blends":
+            length = int(self.headers.get("Content-Length", "0"))
+            try:
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except json.JSONDecodeError:
+                self.send_error(400, "invalid json")
+                return
+            name = (body.get("name") or "").strip()
+            spec = (body.get("spec") or "").strip()
+            if not _BLEND_NAME_RE.match(name):
+                self.send_error(400, "invalid name — use letters, digits, underscore (max 40)")
+                return
+            if not _BLEND_SPEC_RE.match(spec) or "+" not in spec:
+                self.send_error(400, "invalid spec — must contain '+' and use voice-combination syntax")
+                return
+            blends = load_blends()
+            blends[name] = spec
+            save_blends(blends)
+            self.send_response(201)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"name": name, "spec": spec}).encode())
+            return
+
         if self.path != "/tts":
             self.send_error(404)
             return

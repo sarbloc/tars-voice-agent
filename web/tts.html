@@ -24,15 +24,14 @@
         }
 
         html, body {
-            height: 100%;
             background: var(--bg);
             color: var(--text-primary);
             font-family: 'Geist Mono', monospace;
             -webkit-font-smoothing: antialiased;
-            overflow: hidden;
         }
         body {
-            height: 100dvh;
+            min-height: 100vh;
+            min-height: 100dvh;
         }
 
         body::before {
@@ -48,14 +47,14 @@
 
         .wrap {
             max-width: 720px;
-            height: 100%;
+            min-height: 100vh;
+            min-height: 100dvh;
             margin: 0 auto;
             padding: calc(24px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
             position: relative;
             z-index: 1;
             display: flex;
             flex-direction: column;
-            min-height: 0;
         }
 
         .editor {
@@ -130,7 +129,7 @@
         textarea {
             width: 100%;
             flex: 1;
-            min-height: 0;
+            min-height: 280px;
             resize: none;
             overflow-y: auto;
             -webkit-overflow-scrolling: touch;
@@ -147,13 +146,135 @@
         }
         textarea:focus { border-color: var(--amber-dim); }
 
+        .mode-switch {
+            display: flex;
+            gap: 6px;
+            margin-top: 14px;
+            flex-shrink: 0;
+        }
+        .mode-btn {
+            background: transparent;
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-family: inherit;
+            font-size: 10px;
+            font-weight: 400;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            padding: 7px 14px;
+            cursor: pointer;
+            transition: color .15s, border-color .15s, background .15s;
+        }
+        .mode-btn.active {
+            color: var(--amber);
+            border-color: var(--amber-dim);
+            background: var(--amber-dim);
+        }
+
+        .hidden { display: none !important; }
+
         .controls {
             display: flex;
             flex-wrap: wrap;
             gap: 10px;
-            margin-top: 14px;
+            margin-top: 10px;
             align-items: flex-end;
             flex-shrink: 0;
+        }
+
+        .voice-row { display: flex; flex-direction: column; }
+        .select-row { display: flex; gap: 6px; align-items: stretch; }
+
+        .weight-wrap {
+            display: flex;
+            flex-direction: column;
+            min-width: 180px;
+            flex: 1 1 200px;
+        }
+        .weight-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            height: 34px;
+            background: transparent;
+            accent-color: var(--amber);
+            cursor: pointer;
+            margin: 0;
+            padding: 0;
+        }
+        .weight-slider::-webkit-slider-runnable-track {
+            height: 4px;
+            background: var(--border);
+            border-radius: 2px;
+        }
+        .weight-slider::-moz-range-track {
+            height: 4px;
+            background: var(--border);
+            border-radius: 2px;
+        }
+        .weight-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: var(--amber);
+            margin-top: -6px;
+            cursor: pointer;
+        }
+        .weight-slider::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            border: none;
+            border-radius: 50%;
+            background: var(--amber);
+            cursor: pointer;
+        }
+        .weight-label {
+            font-size: 10px;
+            color: var(--text-secondary);
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            margin-top: 2px;
+            text-align: center;
+        }
+
+        .secondary {
+            background: transparent;
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+        }
+        .secondary:hover:not(:disabled) {
+            color: var(--amber);
+            border-color: var(--amber-dim);
+            opacity: 1;
+        }
+
+        .icon-btn {
+            background: transparent;
+            color: var(--text-dim);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-family: inherit;
+            font-size: 16px;
+            line-height: 1;
+            padding: 0 12px;
+            cursor: pointer;
+            transition: color .15s, border-color .15s;
+        }
+        .icon-btn:hover { color: var(--red); border-color: var(--red); }
+        .icon-btn.armed { color: var(--red); border-color: var(--red); font-size: 10px; letter-spacing: 0.1em; padding: 0 10px; text-transform: uppercase; }
+
+        .save-form {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+            align-items: stretch;
+            flex-shrink: 0;
+        }
+        .save-form input[type="text"] {
+            flex: 1;
+            min-width: 0;
         }
 
         select, input[type="text"] {
@@ -267,12 +388,35 @@
             <div class="char-count"><span id="count">0</span> chars</div>
         </div>
 
+        <div class="mode-switch">
+            <button type="button" class="mode-btn active" data-mode="single">Single</button>
+            <button type="button" class="mode-btn" data-mode="blend">Blend</button>
+        </div>
+
         <div class="controls">
-            <div>
+            <div class="voice-row single-only">
                 <label for="voice" style="margin-bottom:4px">Voice</label>
-                <input id="voice" type="text" placeholder="am_onyx (default)">
+                <div class="select-row">
+                    <select id="voice"><option value="">loading…</option></select>
+                    <button type="button" id="delete-blend" class="icon-btn hidden" title="Delete saved blend">×</button>
+                </div>
             </div>
-            <div>
+
+            <div class="voice-row blend-only hidden">
+                <label for="voiceA" style="margin-bottom:4px">Voice A</label>
+                <select id="voiceA"><option value="">loading…</option></select>
+            </div>
+            <div class="voice-row blend-only hidden">
+                <label for="voiceB" style="margin-bottom:4px">Voice B</label>
+                <select id="voiceB"><option value="">loading…</option></select>
+            </div>
+            <div class="weight-wrap blend-only hidden">
+                <label for="weight" style="margin-bottom:4px">Blend</label>
+                <input type="range" id="weight" class="weight-slider" min="1" max="99" step="1" value="50">
+                <span class="weight-label" id="weight-label">50% A · 50% B</span>
+            </div>
+
+            <div class="voice-row">
                 <label for="format" style="margin-bottom:4px">Format</label>
                 <select id="format">
                     <option value="wav">WAV</option>
@@ -282,7 +426,14 @@
                 </select>
             </div>
             <div style="flex:1"></div>
-            <button id="go">Generate</button>
+            <button type="button" id="save-blend" class="secondary blend-only hidden">Save blend</button>
+            <button type="button" id="go">Generate</button>
+        </div>
+
+        <div class="save-form hidden" id="save-form">
+            <input type="text" id="save-name" placeholder="blend name (letters, digits, _)" maxlength="40" autocomplete="off" spellcheck="false">
+            <button type="button" id="save-confirm" class="secondary">Save</button>
+            <button type="button" id="save-cancel" class="icon-btn" title="Cancel">×</button>
         </div>
 
         <div class="status" id="status"></div>
@@ -299,11 +450,268 @@
     <script>
         const $ = (id) => document.getElementById(id);
         const text = $("text"), voice = $("voice"), fmt = $("format");
+        const voiceA = $("voiceA"), voiceB = $("voiceB");
+        const weight = $("weight"), weightLabel = $("weight-label");
+        const saveBlendBtn = $("save-blend"), deleteBlendBtn = $("delete-blend");
+        const saveForm = $("save-form"), saveName = $("save-name");
+        const saveConfirm = $("save-confirm"), saveCancel = $("save-cancel");
         const go = $("go"), status = $("status"), count = $("count");
         const result = $("result"), player = $("player"), dl = $("download"), info = $("info");
         const clearBtn = $("clear");
 
         let lastUrl = null;
+        let mode = "single";
+        let voicesCache = [];
+        let defaultVoice = "";
+        let blendsCache = {};   // name -> spec
+
+        const VOICE_GROUPS = {
+            af_: "American · Female",
+            am_: "American · Male",
+            bf_: "British · Female",
+            bm_: "British · Male",
+            ef_: "Spanish · Female",
+            em_: "Spanish · Male",
+            ff_: "French · Female",
+            hf_: "Hindi · Female",
+            hm_: "Hindi · Male",
+            if_: "Italian · Female",
+            im_: "Italian · Male",
+            jf_: "Japanese · Female",
+            jm_: "Japanese · Male",
+            pf_: "Portuguese · Female",
+            pm_: "Portuguese · Male",
+            zf_: "Chinese · Female",
+            zm_: "Chinese · Male",
+        };
+        const GROUP_ORDER = [
+            "Saved Blends",
+            "American · Male", "American · Female",
+            "British · Male", "British · Female",
+            "Spanish · Male", "Spanish · Female",
+            "French · Female",
+            "Italian · Male", "Italian · Female",
+            "Hindi · Male", "Hindi · Female",
+            "Japanese · Male", "Japanese · Female",
+            "Portuguese · Male", "Portuguese · Female",
+            "Chinese · Male", "Chinese · Female",
+            "Other",
+            "Legacy (v0)",
+        ];
+
+        function groupFor(voiceName) {
+            if (voiceName.includes("_v0")) return "Legacy (v0)";
+            return VOICE_GROUPS[voiceName.slice(0, 3)] || "Other";
+        }
+
+        // Populate a single <select> with stock voices, and optionally include saved blends.
+        // selectedValue: the option to mark selected; falls back to defaultVoice.
+        function populateSelect(select, { includeBlends, selectedValue }) {
+            const groups = {};
+            if (includeBlends) {
+                const entries = Object.entries(blendsCache).sort();
+                if (entries.length) {
+                    groups["Saved Blends"] = entries.map(([name, spec]) => ({
+                        value: spec,
+                        label: `${name}  (${spec})`,
+                        dataset: { blendName: name },
+                    }));
+                }
+            }
+            for (const v of voicesCache) {
+                const label = groupFor(v);
+                (groups[label] ||= []).push({ value: v, label: v });
+            }
+            select.innerHTML = "";
+            const target = selectedValue || defaultVoice;
+            for (const gLabel of GROUP_ORDER) {
+                const items = groups[gLabel];
+                if (!items) continue;
+                const og = document.createElement("optgroup");
+                og.label = gLabel;
+                // Sort non-blend items; blends are already sorted above.
+                if (gLabel !== "Saved Blends") items.sort((a, b) => a.label.localeCompare(b.label));
+                for (const item of items) {
+                    const o = document.createElement("option");
+                    o.value = item.value;
+                    o.textContent = item.label;
+                    if (item.dataset) for (const [k, v] of Object.entries(item.dataset)) o.dataset[k] = v;
+                    if (item.value === target) o.selected = true;
+                    og.appendChild(o);
+                }
+                select.appendChild(og);
+            }
+        }
+
+        async function loadVoicesAndBlends() {
+            try {
+                const [voicesRes, blendsRes] = await Promise.all([
+                    fetch("/voices"),
+                    fetch("/blends"),
+                ]);
+                if (!voicesRes.ok) throw new Error("voices: " + voicesRes.statusText);
+                const { voices, default: def } = await voicesRes.json();
+                voicesCache = voices;
+                defaultVoice = def;
+                if (blendsRes.ok) {
+                    const { blends } = await blendsRes.json();
+                    blendsCache = Object.fromEntries(blends.map((b) => [b.name, b.spec]));
+                }
+                populateSelect(voice, { includeBlends: true });
+                populateSelect(voiceA, { includeBlends: false });
+                // Pick a contrasting default for B — first voice that isn't the default.
+                const bPick = voicesCache.find((v) => v !== defaultVoice) || defaultVoice;
+                populateSelect(voiceB, { includeBlends: false, selectedValue: bPick });
+                updateDeleteBtn();
+            } catch (e) {
+                console.error("failed to load voices/blends", e);
+                voice.innerHTML = '<option value="">failed to load — retry</option>';
+            }
+        }
+
+        // Mode switching
+        function setMode(newMode) {
+            mode = newMode;
+            for (const b of document.querySelectorAll(".mode-btn")) {
+                b.classList.toggle("active", b.dataset.mode === mode);
+            }
+            for (const el of document.querySelectorAll(".single-only")) {
+                el.classList.toggle("hidden", mode !== "single");
+            }
+            for (const el of document.querySelectorAll(".blend-only")) {
+                el.classList.toggle("hidden", mode !== "blend");
+            }
+            if (mode !== "blend") saveForm.classList.add("hidden");
+            resetDeleteBtn();
+        }
+        for (const b of document.querySelectorAll(".mode-btn")) {
+            b.addEventListener("click", () => setMode(b.dataset.mode));
+        }
+
+        // Weight slider — build "X% A · Y% B" label
+        function updateWeightLabel() {
+            const w = parseInt(weight.value, 10);
+            weightLabel.textContent = `${w}% A · ${100 - w}% B`;
+        }
+        weight.addEventListener("input", updateWeightLabel);
+
+        // Build the voice string to send to the TTS endpoint.
+        function currentVoiceSpec() {
+            if (mode === "single") {
+                return voice.value || undefined;
+            }
+            const a = voiceA.value, b = voiceB.value;
+            if (!a || !b) return undefined;
+            const w = parseInt(weight.value, 10);
+            if (w === 50) return `${a}+${b}`;
+            return `${a}(${w})+${b}(${100 - w})`;
+        }
+
+        // Show the × button only when the current single-mode selection is a saved blend.
+        function updateDeleteBtn() {
+            const sel = voice.options[voice.selectedIndex];
+            const isBlend = sel && sel.dataset.blendName;
+            deleteBlendBtn.classList.toggle("hidden", !isBlend);
+            resetDeleteBtn();
+        }
+        function resetDeleteBtn() {
+            deleteBlendBtn.classList.remove("armed");
+            deleteBlendBtn.textContent = "×";
+            deleteBlendBtn.dataset.armedName = "";
+        }
+        voice.addEventListener("change", updateDeleteBtn);
+
+        // Two-tap delete (no confirm() — iframes/PWAs can suppress it).
+        deleteBlendBtn.addEventListener("click", async () => {
+            const sel = voice.options[voice.selectedIndex];
+            const name = sel && sel.dataset.blendName;
+            if (!name) return;
+            if (deleteBlendBtn.dataset.armedName !== name) {
+                deleteBlendBtn.classList.add("armed");
+                deleteBlendBtn.textContent = "tap again";
+                deleteBlendBtn.dataset.armedName = name;
+                setTimeout(() => {
+                    if (deleteBlendBtn.dataset.armedName === name) resetDeleteBtn();
+                }, 3000);
+                return;
+            }
+            const res = await fetch(`/blends/${encodeURIComponent(name)}`, { method: "DELETE" });
+            if (!res.ok && res.status !== 204) {
+                status.textContent = `delete failed — ${res.status}`;
+                status.classList.add("error");
+                resetDeleteBtn();
+                return;
+            }
+            delete blendsCache[name];
+            populateSelect(voice, { includeBlends: true });
+            updateDeleteBtn();
+            status.classList.remove("error");
+            status.textContent = `deleted blend "${name}"`;
+        });
+
+        // Inline save form (no prompt() — iframes/PWAs can suppress it).
+        function openSaveForm() {
+            const spec = currentVoiceSpec();
+            if (!spec || !spec.includes("+")) {
+                status.textContent = "pick two voices first";
+                status.classList.add("error");
+                return;
+            }
+            status.classList.remove("error");
+            status.textContent = "";
+            saveForm.classList.remove("hidden");
+            saveName.value = "";
+            saveName.focus();
+        }
+        function closeSaveForm() { saveForm.classList.add("hidden"); }
+
+        async function commitSaveBlend() {
+            const spec = currentVoiceSpec();
+            const name = saveName.value.trim();
+            if (!/^[a-zA-Z][a-zA-Z0-9_]{0,39}$/.test(name)) {
+                status.textContent = "invalid name — letters/digits/underscore, start with a letter";
+                status.classList.add("error");
+                saveName.focus();
+                return;
+            }
+            if (!spec || !spec.includes("+")) {
+                status.textContent = "pick two voices first";
+                status.classList.add("error");
+                return;
+            }
+            saveConfirm.disabled = true;
+            try {
+                const res = await fetch("/blends", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name, spec }),
+                });
+                if (!res.ok) {
+                    const msg = await res.text().catch(() => "");
+                    status.textContent = `save failed — ${res.status} ${msg}`;
+                    status.classList.add("error");
+                    return;
+                }
+                blendsCache[name] = spec;
+                populateSelect(voice, { includeBlends: true, selectedValue: spec });
+                updateDeleteBtn();
+                closeSaveForm();
+                status.classList.remove("error");
+                status.textContent = `saved blend "${name}"`;
+            } finally {
+                saveConfirm.disabled = false;
+            }
+        }
+
+        saveBlendBtn.addEventListener("click", openSaveForm);
+        saveConfirm.addEventListener("click", commitSaveBlend);
+        saveCancel.addEventListener("click", closeSaveForm);
+        saveName.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") { e.preventDefault(); commitSaveBlend(); }
+            else if (e.key === "Escape") closeSaveForm();
+        });
+
+        loadVoicesAndBlends();
 
         const updateCount = () => {
             const n = text.value.length;
@@ -338,7 +746,7 @@
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         text: body,
-                        voice: voice.value.trim() || undefined,
+                        voice: currentVoiceSpec(),
                         format,
                     }),
                 });
